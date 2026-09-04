@@ -1,0 +1,23 @@
+# build trees
+build/
+out/
+vcpkg_installed/
+CMakeUserPresets.json
+
+# python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# editors / os
+.vs/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
