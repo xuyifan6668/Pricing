@@ -1,0 +1,10 @@
+{
+  "name": "ratelib",
+  "version-string": "0.1.0",
+  "description": "Exotic rates pricing library (multi-curve, SABR, LGM, Bermudan, AAD)",
+  "dependencies": [
+    "eigen3",
+    "catch2",
+    "nlohmann-json"
+  ]
+}
