@@ -1,0 +1,342 @@
+{
+  "_comment": "SIMPLIFICATION: synthetic marks in a plausible September-2026 configuration (Fed funds target 3.75-4.00%), not vendor data. Schema: cpp/market/include/rl/market/quote.hpp. USD-SOFR curve: OIS to 2M, SR3 futures Sep26-Jun28 with convexity adjustments as inputs, OIS 3Y-20Y, and at 25Y/30Y the FF-SOFR basis swaps (curve: USD-SOFR) because no SOFR OIS is quoted there. USD-FEDFUNDS curve: FF-SOFR basis swaps 3M-20Y (spread on the FF leg) and FF OIS at 25Y/30Y. That cross-assignment is what makes a sequential bootstrap fail and a global solve necessary. One turn-of-year quote, used only when the curve supports a jump layer.",
+  "asOf": "2026-09-04",
+  "currency": "USD",
+  "quotes": [
+    {
+      "id": "SOFR-OIS-1W",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "1W",
+      "value": 3.85,
+      "unit": "pct"
+    },
+    {
+      "id": "SOFR-OIS-2W",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "2W",
+      "value": 3.85,
+      "unit": "pct"
+    },
+    {
+      "id": "SOFR-OIS-1M",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "1M",
+      "value": 3.83,
+      "unit": "pct"
+    },
+    {
+      "id": "SOFR-OIS-2M",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "2M",
+      "value": 3.8,
+      "unit": "pct"
+    },
+    {
+      "id": "SOFR-OIS-3Y",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "3Y",
+      "value": 3.28,
+      "unit": "pct"
+    },
+    {
+      "id": "SOFR-OIS-4Y",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "4Y",
+      "value": 3.28,
+      "unit": "pct"
+    },
+    {
+      "id": "SOFR-OIS-5Y",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "5Y",
+      "value": 3.3,
+      "unit": "pct"
+    },
+    {
+      "id": "SOFR-OIS-6Y",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "6Y",
+      "value": 3.33,
+      "unit": "pct"
+    },
+    {
+      "id": "SOFR-OIS-7Y",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "7Y",
+      "value": 3.36,
+      "unit": "pct"
+    },
+    {
+      "id": "SOFR-OIS-8Y",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "8Y",
+      "value": 3.39,
+      "unit": "pct"
+    },
+    {
+      "id": "SOFR-OIS-9Y",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "9Y",
+      "value": 3.42,
+      "unit": "pct"
+    },
+    {
+      "id": "SOFR-OIS-10Y",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "10Y",
+      "value": 3.45,
+      "unit": "pct"
+    },
+    {
+      "id": "SOFR-OIS-12Y",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "12Y",
+      "value": 3.5,
+      "unit": "pct"
+    },
+    {
+      "id": "SOFR-OIS-15Y",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "15Y",
+      "value": 3.56,
+      "unit": "pct"
+    },
+    {
+      "id": "SOFR-OIS-20Y",
+      "type": "ois_swap",
+      "index": "USD-SOFR",
+      "tenor": "20Y",
+      "value": 3.6,
+      "unit": "pct"
+    },
+    {
+      "id": "FF-OIS-25Y",
+      "type": "ois_swap",
+      "index": "USD-FEDFUNDS",
+      "tenor": "25Y",
+      "value": 3.62,
+      "unit": "pct"
+    },
+    {
+      "id": "FF-OIS-30Y",
+      "type": "ois_swap",
+      "index": "USD-FEDFUNDS",
+      "tenor": "30Y",
+      "value": 3.56,
+      "unit": "pct"
+    },
+    {
+      "id": "SR3-U6",
+      "type": "future",
+      "index": "USD-SOFR",
+      "start": "2026-09-16",
+      "end": "2026-12-16",
+      "value": 96.21,
+      "unit": "price",
+      "convexity_bp": 0.1
+    },
+    {
+      "id": "SR3-Z6",
+      "type": "future",
+      "index": "USD-SOFR",
+      "start": "2026-12-16",
+      "end": "2027-03-17",
+      "value": 96.33,
+      "unit": "price",
+      "convexity_bp": 0.3
+    },
+    {
+      "id": "SR3-H7",
+      "type": "future",
+      "index": "USD-SOFR",
+      "start": "2027-03-17",
+      "end": "2027-06-16",
+      "value": 96.45,
+      "unit": "price",
+      "convexity_bp": 0.6
+    },
+    {
+      "id": "SR3-M7",
+      "type": "future",
+      "index": "USD-SOFR",
+      "start": "2027-06-16",
+      "end": "2027-09-15",
+      "value": 96.55,
+      "unit": "price",
+      "convexity_bp": 1.0
+    },
+    {
+      "id": "SR3-U7",
+      "type": "future",
+      "index": "USD-SOFR",
+      "start": "2027-09-15",
+      "end": "2027-12-15",
+      "value": 96.63,
+      "unit": "price",
+      "convexity_bp": 1.5
+    },
+    {
+      "id": "SR3-Z7",
+      "type": "future",
+      "index": "USD-SOFR",
+      "start": "2027-12-15",
+      "end": "2028-03-15",
+      "value": 96.69,
+      "unit": "price",
+      "convexity_bp": 2.1
+    },
+    {
+      "id": "SR3-H8",
+      "type": "future",
+      "index": "USD-SOFR",
+      "start": "2028-03-15",
+      "end": "2028-06-21",
+      "value": 96.73,
+      "unit": "price",
+      "convexity_bp": 2.8
+    },
+    {
+      "id": "SR3-M8",
+      "type": "future",
+      "index": "USD-SOFR",
+      "start": "2028-06-21",
+      "end": "2028-09-20",
+      "value": 96.75,
+      "unit": "price",
+      "convexity_bp": 3.6
+    },
+    {
+      "id": "FF-SOFR-3M",
+      "type": "basis_swap",
+      "index": "USD-FEDFUNDS",
+      "reference_index": "USD-SOFR",
+      "tenor": "3M",
+      "value": -1.5,
+      "unit": "bp"
+    },
+    {
+      "id": "FF-SOFR-6M",
+      "type": "basis_swap",
+      "index": "USD-FEDFUNDS",
+      "reference_index": "USD-SOFR",
+      "tenor": "6M",
+      "value": -1.8,
+      "unit": "bp"
+    },
+    {
+      "id": "FF-SOFR-1Y",
+      "type": "basis_swap",
+      "index": "USD-FEDFUNDS",
+      "reference_index": "USD-SOFR",
+      "tenor": "1Y",
+      "value": -2.0,
+      "unit": "bp"
+    },
+    {
+      "id": "FF-SOFR-2Y",
+      "type": "basis_swap",
+      "index": "USD-FEDFUNDS",
+      "reference_index": "USD-SOFR",
+      "tenor": "2Y",
+      "value": -2.5,
+      "unit": "bp"
+    },
+    {
+      "id": "FF-SOFR-3Y",
+      "type": "basis_swap",
+      "index": "USD-FEDFUNDS",
+      "reference_index": "USD-SOFR",
+      "tenor": "3Y",
+      "value": -2.8,
+      "unit": "bp"
+    },
+    {
+      "id": "FF-SOFR-5Y",
+      "type": "basis_swap",
+      "index": "USD-FEDFUNDS",
+      "reference_index": "USD-SOFR",
+      "tenor": "5Y",
+      "value": -3.2,
+      "unit": "bp"
+    },
+    {
+      "id": "FF-SOFR-7Y",
+      "type": "basis_swap",
+      "index": "USD-FEDFUNDS",
+      "reference_index": "USD-SOFR",
+      "tenor": "7Y",
+      "value": -3.5,
+      "unit": "bp"
+    },
+    {
+      "id": "FF-SOFR-10Y",
+      "type": "basis_swap",
+      "index": "USD-FEDFUNDS",
+      "reference_index": "USD-SOFR",
+      "tenor": "10Y",
+      "value": -3.8,
+      "unit": "bp"
+    },
+    {
+      "id": "FF-SOFR-15Y",
+      "type": "basis_swap",
+      "index": "USD-FEDFUNDS",
+      "reference_index": "USD-SOFR",
+      "tenor": "15Y",
+      "value": -4.0,
+      "unit": "bp"
+    },
+    {
+      "id": "FF-SOFR-20Y",
+      "type": "basis_swap",
+      "index": "USD-FEDFUNDS",
+      "reference_index": "USD-SOFR",
+      "tenor": "20Y",
+      "value": -4.0,
+      "unit": "bp"
+    },
+    {
+      "id": "FF-SOFR-25Y",
+      "type": "basis_swap",
+      "index": "USD-FEDFUNDS",
+      "reference_index": "USD-SOFR",
+      "tenor": "25Y",
+      "value": -4.0,
+      "unit": "bp",
+      "curve": "USD-SOFR"
+    },
+    {
+      "id": "FF-SOFR-30Y",
+      "type": "basis_swap",
+      "index": "USD-FEDFUNDS",
+      "reference_index": "USD-SOFR",
+      "tenor": "30Y",
+      "value": -4.0,
+      "unit": "bp",
+      "curve": "USD-SOFR"
+    },
+    {
+      "id": "TURN-2026",
+      "type": "turn",
+      "index": "USD-SOFR",
+      "start": "2026-12-31",
+      "end": "2027-01-04",
+      "value": 8.0,
+      "unit": "bp"
+    }
+  ]
+}
