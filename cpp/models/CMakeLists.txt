@@ -1,0 +1,18 @@
+# rl_models: the LGM one-factor model, European swaption pricing under it, and calibration to a
+# co-terminal swaption strip. Double only: a calibration is a solve, and risk on model prices is
+# taken by bumping the market and re-calibrating.
+rl_add_module(
+  NAME models
+  DEPS rl::core rl::math rl::market rl::instruments rl::linear rl::vol rl::bootstrap
+  SOURCES
+    src/lgm.cpp
+    src/flows.cpp
+    src/lgm_swaption.cpp
+    src/lgm_calibration.cpp
+    src/usd_market.cpp
+  TEST_SOURCES
+    test/test_lgm.cpp
+    test/test_flows.cpp
+    test/test_lgm_swaption.cpp
+    test/test_lgm_calibration.cpp
+)
