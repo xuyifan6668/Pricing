@@ -2,6 +2,8 @@
 // model reprice what it was calibrated to, and is the fitted variance a variance.
 #include "rl/models/lgm_calibration.hpp"
 
+#include "rl/models/g2pp_calibration.hpp"
+
 #include "rl/core/error.hpp"
 #include "rl/models/lgm_swaption.hpp"
 #include "test_support.hpp"
@@ -78,4 +80,50 @@ TEST_CASE("Calibration input validation", "[models][calibration]") {
     auto strip = makeStrip(rights10nc1(0.035), 0.0085);
     std::swap(strip[0], strip[1]);
     CHECK_THROWS_AS(calibrateLgm(0.03, strip), rl::InputError);
+}
+
+TEST_CASE("Mean reversion is recovered from a second strip of a different tenor", "[models][calibration][kappa]") {
+    const UsdMarket& m = usdMarket();
+    // Both strips priced by one model: the calibration must find its mean reversion and reprice both.
+    const Lgm1F truth = Lgm1F::constantSigma(0.06, 0.009, 40.0);
+    auto priced = [&](std::vector<CalibrationInstrument> ins) {
+        for (CalibrationInstrument& ci : ins) {
+            ci.marketPrice = lgmSwaptionPrice(truth, ci.right);
+            ci.marketVol = impliedNormalVol(ci.right, ci.marketPrice);
+        }
+        return ins;
+    };
+    const auto strip = priced(makeStrip(rights10nc1(0.035), 0.008));
+    const auto shortTenor = priced(makeAtmMatrix(m.asOf, m.curves, m.cube, {1, 2, 3, 4, 5, 6, 7, 8, 9}, {1}));
+    const MeanReversionCalibration cal = calibrateLgmMeanReversion(strip, shortTenor);
+    CHECK_THAT(cal.kappa, WithinAbs(0.06, 1e-5));
+    CHECK(cal.secondaryRmsBp < 1e-3);
+    CHECK(cal.calibration.ok);
+    CHECK_FALSE(cal.atBound);
+    REQUIRE(cal.scanKappa.size() == 31);
+    // The strip alone does not see kappa: it is repriced at every value scanned.
+    CHECK(calibrateLgm(cal.scanKappa.front(), strip).maxAbsErrorBp < 1e-6);
+    CHECK(calibrateLgm(cal.scanKappa.back(), strip).maxAbsErrorBp < 1e-6);
+    // The second strip does: the error grows away from the truth on both sides.
+    CHECK(cal.scanRmsBp.front() > 5.0);
+    CHECK(cal.scanRmsBp.back() > 5.0);
+    CHECK_THROWS_AS(calibrateLgmMeanReversion(strip, {}), rl::InputError);
+    CHECK_THROWS_AS(calibrateLgmMeanReversion(strip, shortTenor, 0.1, 0.1), rl::InputError);
+}
+
+TEST_CASE("A range that excludes the answer is reported as a bound, not as a fit", "[models][calibration][kappa]") {
+    const UsdMarket& m = usdMarket();
+    const Lgm1F truth = Lgm1F::constantSigma(0.06, 0.009, 40.0);
+    auto priced = [&](std::vector<CalibrationInstrument> ins) {
+        for (CalibrationInstrument& ci : ins) {
+            ci.marketPrice = lgmSwaptionPrice(truth, ci.right);
+            ci.marketVol = impliedNormalVol(ci.right, ci.marketPrice);
+        }
+        return ins;
+    };
+    const MeanReversionCalibration cal = calibrateLgmMeanReversion(priced(makeStrip(rights10nc1(0.035), 0.008)),
+                                                                   priced(makeAtmMatrix(m.asOf, m.curves, m.cube, {1, 3, 5, 7, 9}, {1})), 0.10, 0.20);
+    CHECK(cal.atBound);
+    CHECK_THAT(cal.kappa, WithinAbs(0.10, 1e-3));
+    CHECK(cal.secondaryRmsBp > 1.0);
 }

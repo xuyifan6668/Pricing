@@ -65,4 +65,26 @@ std::vector<CalibrationInstrument> makeStrip(const std::vector<ExerciseRight>& r
 /// increasing expiry order. Throws InputError on an empty or unordered strip.
 LgmCalibration calibrateLgm(double kappa, const std::vector<CalibrationInstrument>& strip);
 
+/// Marking the mean reversion.
+///
+/// A co-terminal strip pins ζ for ANY κ, so it cannot say what κ is. A second set of swaptions with
+/// the same expiries but a different tenor can: given ζ(t), the model vol of a short swap starting
+/// at t scales with H(t + tenor) − H(t) = e^{−κt} H(tenor), which falls with κ, while the co-terminal
+/// swap's does not move by construction. So κ is chosen to minimise the RMS error on the second set,
+/// re-bootstrapping ζ to the strip at every trial value. The second set is fitted in the
+/// least-squares sense only: one number cannot reprice nine instruments, and the residual says how
+/// far a one-factor model is from holding both strips at once.
+struct MeanReversionCalibration {
+    double kappa = 0.0;
+    LgmCalibration calibration;        ///< the strip calibration at that κ: still exact
+    double secondaryRmsBp = 0.0;       ///< RMS error on the second set, bp of normal vol
+    std::vector<double> secondaryErrorsBp; ///< model − market per instrument of the second set
+    std::vector<double> scanKappa, scanRmsBp; ///< the objective over the search range
+    bool atBound = false;              ///< the minimum is at an end of the range: κ is not identified inside it
+};
+
+/// Throws InputError on an empty second set or an empty range.
+MeanReversionCalibration calibrateLgmMeanReversion(const std::vector<CalibrationInstrument>& strip, const std::vector<CalibrationInstrument>& secondary,
+                                                   double kappaMin = -0.02, double kappaMax = 0.25);
+
 } // namespace rl::models

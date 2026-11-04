@@ -85,4 +85,56 @@ LgmCalibration calibrateLgm(double kappa, const std::vector<CalibrationInstrumen
     return out;
 }
 
+MeanReversionCalibration calibrateLgmMeanReversion(const std::vector<CalibrationInstrument>& strip, const std::vector<CalibrationInstrument>& secondary,
+                                                   double kappaMin, double kappaMax) {
+    RL_REQUIRE(!secondary.empty(), "calibrateLgmMeanReversion: empty second set");
+    RL_REQUIRE(kappaMax > kappaMin, "calibrateLgmMeanReversion: empty mean-reversion range");
+    auto errors = [&](double kappa) {
+        const Lgm1F model = calibrateLgm(kappa, strip).model;
+        std::vector<double> e;
+        for (const CalibrationInstrument& ci : secondary) e.push_back((impliedNormalVol(ci.right, lgmSwaptionPrice(model, ci.right)) - ci.marketVol) * 1e4);
+        return e;
+    };
+    auto rms = [&](double kappa) {
+        double sum = 0.0;
+        for (double e : errors(kappa)) sum += e * e;
+        return std::sqrt(sum / static_cast<double>(secondary.size()));
+    };
+
+    MeanReversionCalibration out{0.0, calibrateLgm(kappaMin, strip), 0.0, {}, {}, {}, false};
+    // A coarse scan first: the objective need not be unimodal over a wide range.
+    const int n = 30;
+    std::size_t best = 0;
+    for (int i = 0; i <= n; ++i) {
+        out.scanKappa.push_back(kappaMin + (kappaMax - kappaMin) * i / n);
+        out.scanRmsBp.push_back(rms(out.scanKappa.back()));
+        if (out.scanRmsBp.back() < out.scanRmsBp[best]) best = static_cast<std::size_t>(i);
+    }
+    out.atBound = best == 0 || best == static_cast<std::size_t>(n);
+    // Golden-section search between the scan points either side of the best one.
+    double a = out.scanKappa[best == 0 ? 0 : best - 1], b = out.scanKappa[std::min(best + 1, static_cast<std::size_t>(n))];
+    const double g = 0.6180339887498949;
+    double c = b - g * (b - a), d = a + g * (b - a), fc = rms(c), fd = rms(d);
+    while (b - a > 1e-7) {
+        if (fc < fd) {
+            b = d;
+            d = c;
+            fd = fc;
+            c = b - g * (b - a);
+            fc = rms(c);
+        } else {
+            a = c;
+            c = d;
+            fc = fd;
+            d = a + g * (b - a);
+            fd = rms(d);
+        }
+    }
+    out.kappa = 0.5 * (a + b);
+    out.calibration = calibrateLgm(out.kappa, strip);
+    out.secondaryErrorsBp = errors(out.kappa);
+    out.secondaryRmsBp = rms(out.kappa);
+    return out;
+}
+
 } // namespace rl::models
