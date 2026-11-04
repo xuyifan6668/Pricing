@@ -47,6 +47,7 @@ add_subdirectory(cpp/bootstrap)     # global multi-curve solve, adjoint Jacobian
 add_subdirectory(cpp/vol)           # Bachelier/Black, SABR and its fit, cube queries, arbitrage check
 add_subdirectory(cpp/models)        # LGM 1F, swaption pricing under it, strip calibration, the shared USD market
 add_subdirectory(cpp/pricers)       # Bermudan by PDE, LSMC and Andersen-Broadie; swap exposure; bump and adjoint risk
+add_subdirectory(cpp/xva)           # credit curve, exposure engine, CVA/DVA/FVA, Bermudan exposure, CVA risk
 
 if(RL_BUILD_EXAMPLES)
   add_subdirectory(cpp/examples)
