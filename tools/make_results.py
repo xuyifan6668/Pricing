@@ -578,6 +578,381 @@ Not modelled: collateral, netting, margin period of risk, wrong-way risk.
 """
 
 
+def two_factor(res: Path) -> str:
+    par = read(res, "g2pp_params")
+    fit = read(res, "g2pp_fit")
+    swp = read(res, "g2pp_swaption")
+    ber = read(res, "g2pp_bermudan")
+
+    one = par[0]
+    two = [r for r in par if r["model"] == "2F"]
+    best = min(two, key=lambda r: float(r["rms_bp"]))
+    par_body = [["one factor", "", f"{float(one['kappa1']):.1%}", "", "", "", f"{float(one['rms_bp']):.2f}", f"{float(one['max_bp']):.2f}", "1.000"]]
+    for r in two:
+        par_body.append(["two factors", r["start"].replace("kappa1", "κ₁").replace("rho", "ρ"), f"{float(r['kappa1']):.1%}", f"{float(r['kappa2']):.1%}", f"{float(r['sigma_ratio']):.2f}", f"{float(r['rho']):+.2f}", f"{float(r['rms_bp']):.2f}", f"{float(r['max_bp']):.2f}", f"{float(r['corr_1y_10y']):.3f}"])
+    bounds = sorted({b.replace("kappa", "κ") for r in two for b in r["active_bounds"].split() if b})
+    rms2 = [float(r["rms_bp"]) for r in two]
+    corr2 = [float(r["corr_1y_10y"]) for r in two]
+    stalled = sum(r["status"] == "MaxIterations" for r in two)
+    converged = f"{stalled} of the {len(two)} fits stopped at the iteration limit: the objective is flat along a valley." if stalled else "All fits converged."
+
+    expiries = sorted({round(float(r["expiry"])) for r in fit})
+    tenors = sorted({round(float(r["tenor"])) for r in fit})
+    cell = {(round(float(r["expiry"])), round(float(r["tenor"]))): r for r in fit}
+    err_body = [[f"{e}Y"] + [f"{float(cell[(e, t)]['error_1f_bp']):+.1f} / {float(cell[(e, t)]['error_2f_bp']):+.1f}" for t in tenors] for e in expiries]
+
+    swp_body = [[r["quadrature_points"], f"{float(r['price_bp']):.6f}", f"{abs(float(r['error_vs_2d_integration_bp'])):.0e}", f"{float(r['us_per_price']):.0f}"] for r in swp]
+
+    pde = float(ber[0]["price_bp"])
+    europe = float(ber[0]["best_european_bp"])
+    off = ber[1]
+    scan = [r for r in ber if r["case"] == "fast second factor"]
+    fitted = ber[-1]
+    ber_body = [["One factor, PDE", "", "1.000", f"{pde:.2f}", f"{pde - europe:.1f}", ber[0]["strip_error_bp"]]]
+    ber_body.append(["Two-factor code, second factor off", "", "1.000", f"{float(off['price_bp']):.2f} ± {float(off['se_bp']):.2f}", f"{float(off['price_bp']) - europe:.1f}", off["strip_error_bp"]])
+    for r in scan:
+        ber_body.append(["Fast second factor", f"{float(r['rho']):+.1f}", f"{float(r['corr_1y_10y']):.3f}", f"{float(r['price_bp']):.2f} ± {float(r['se_bp']):.2f}", f"{float(r['price_bp']) - europe:.1f}", r["strip_error_bp"]])
+    ber_body.append(["Shape fitted to the ATM matrix", f"{float(fitted['rho']):+.2f}", f"{float(fitted['corr_1y_10y']):.3f}", f"{float(fitted['price_bp']):.2f} ± {float(fitted['se_bp']):.2f}", f"{float(fitted['price_bp']) - europe:.1f}", fitted["strip_error_bp"]])
+    prices = [float(r["price_bp"]) for r in scan]
+    worst_strip = max(float(r["strip_error_bp"]) for r in ber)
+
+    fig, ax = plt.subplots(figsize=(5.8, 3.3))
+    ax.axhline(pde, color=MUTED, linewidth=1.0, linestyle="--")
+    ax.annotate("one factor (PDE)", (-0.9, pde), textcoords="offset points", xytext=(0, 5), color=MUTED, fontsize=8)
+    ax.axhline(europe, color=GRID, linewidth=1.0)
+    ax.annotate("best European", (-0.9, europe), textcoords="offset points", xytext=(0, 5), color=MUTED, fontsize=8)
+    ax.errorbar(col(scan, "rho"), prices, yerr=[2 * float(r["se_bp"]) for r in scan], fmt="o-", color=BLUE, capsize=3)
+    ax.set_title("Bermudan value against factor correlation")
+    ax.set_xlabel("correlation ρ between the two factors")
+    ax.set_ylabel("bp of notional")
+    plot = save(fig, "g2pp_bermudan.png")
+
+    return f"""## 9. A second factor: G2++
+
+**Model view.** One factor moves every rate together. G2++ has two Gaussian factors with different mean
+reversions and a correlation ρ between them, so the curve can steepen and flatten as well as shift. It is
+written here in the same deflated-bond form as the one-factor model: the state is driftless, the curve is
+fitted by construction, and Monte Carlo steps are exact. A common volatility scale s(t) carries the level;
+the two speeds, the volatility ratio and ρ carry the shape.
+
+### 9.1 European swaptions: one closed form and a one-dimensional integral
+
+With two states there is no single exercise point, so Jamshidian's decomposition does not apply directly.
+Conditioning on one direction of the state brings it back: the inner expectation is a closed form and the
+outer integral is one-dimensional. Price of a 5Y×10Y payer against two-dimensional numerical integration:
+
+{table(["Gauss–Hermite points", "Price (bp)", "Error (bp)", "Time (µs)"], swp_body, "rrrr")}
+
+Four points already give the price to {abs(float(swp[1]["error_vs_2d_integration_bp"])):.0e} bp. That is a consequence of the direction chosen for the
+closed form. Brigo and Mercurio condition on the first factor; that is exact, but when the factors are
+highly correlated the remaining integrand tends to the kinked payoff and the quadrature stops converging.
+Taking the closed form along the direction that decides exercise leaves an integrand that is almost flat,
+and exactly constant in the one-factor limit. The tests check the formula against their bond-option
+formula, against two-dimensional integration, and against the one-factor model when the second factor is
+switched off.
+
+### 9.2 Shape from the ATM matrix: what the second factor buys here, and what it does not
+
+Both models are fitted to {len(fit)} ATM swaptions (expiries {expiries[0]}Y–{expiries[-1]}Y, tenors {tenors[0]}Y–{tenors[-1]}Y) with the same freedom in the
+level: one volatility scale per expiry row. What is left to explain is the tenor direction, which is where
+a second factor can help. The two-factor fit is run from four starting points.
+
+{table(["Model", "Start", "κ₁", "κ₂", "σ₂/σ₁", "ρ", "RMS error (bp)", "Worst (bp)", "Corr(1Y, 10Y fwd)"], par_body, "llrrrrrrr")}
+
+Fit errors in bp of normal vol, one factor / two factors (best start), by expiry (rows) and tenor (columns):
+
+{table(["Expiry"] + [f"{t}Y" for t in tenors], err_body)}
+
+- The second factor improves the fit from {float(one["rms_bp"]):.2f} bp to {min(rms2):.2f} bp. That is a small gain for three extra
+  parameters.
+- **The shape is not identified by this matrix.** The four starts end at RMS errors between {min(rms2):.2f} and
+  {max(rms2):.2f} bp with different parameters, a forward-rate correlation anywhere from {min(corr2):.2f} to {max(corr2):.2f},
+  and a bound active every time ({", ".join(bounds)}). {converged}
+- The one-factor residuals have the same signs on every row: too low at the 1Y and 20Y tenors, too high
+  in between. That is a tenor shape one mean reversion cannot produce. The second factor removes part of
+  it at the short expiries and none of it at the long ones.
+- The vol screen is synthetic: it was generated from smooth SABR surfaces, not from a correlation
+  structure. Published calibrations to market data typically find ρ strongly negative; this matrix carries
+  no such information, and the fit says so instead of returning a confident number.
+
+### 9.3 The Bermudan: the same Europeans, a different correlation
+
+Holding the shape fixed, the volatility scale is bootstrapped to the co-terminal strip of the 10nc1 payer
+at 3.50%, one expiry at a time, exactly as ζ is in the one-factor model. Every model below reprices the
+nine Europeans (worst error {worst_strip:.0e} bp of vol). They differ only in how rates on different exercise dates
+are correlated. Prices are Longstaff–Schwartz lower bounds on one million paths, regressing on both states.
+
+{table(["Model", "ρ", "Corr(1Y, 10Y fwd)", "Bermudan (bp)", "Switch value (bp)", "Strip error (bp)"], ber_body, "lrrrrr")}
+
+{plot}
+
+- **The pricer is validated where the answer is known.** With the second factor switched off the two-factor
+  Monte Carlo gives {float(off["price_bp"]):.2f} ± {float(off["se_bp"]):.2f} bp against the one-factor PDE's {pde:.2f} bp.
+- **Correlation moves the Bermudan by {max(prices) - min(prices):.0f} bp** (from {min(prices):.1f} to {max(prices):.1f} bp as ρ goes from −0.9 to +0.9)
+  while every calibration instrument stays repriced. That is the same order as the effect of mean reversion
+  in section 6, and for the same reason: the Europeans fix the variance of each swap rate on its own
+  exercise date and say nothing about how the rates on different dates move together.
+- **Which correlation matters.** The prices are not ordered by the correlation between forward rates of
+  different maturities (third column): the highest price has the highest such correlation. What the
+  Bermudan prices is correlation across TIME, between the swap rates seen on different exercise dates. A
+  fast factor's shocks have died out by the later dates. Positively correlated with the slow factor, it
+  makes recent shocks count for more than old ones, which is what extra mean reversion does, and the
+  switch value rises. Negatively correlated, it offsets recent shocks, acts like negative mean reversion,
+  and the value falls below the one-factor price.
+- With the shape fitted to the ATM matrix the Bermudan is {float(fitted["price_bp"]):.1f} bp, {abs(float(fitted["price_bp"]) - pde):.1f} bp from the one-factor price.
+  Given 9.2, that number is one point in a range the calibration set does not narrow. A desk closes it
+  with instruments that see correlation directly: Bermudan quotes, CMS spread options, or a second strip.
+
+Not done: an upper bound for the two-factor price (the duality gap of the one-factor rule in section 5 was
+below one basis point, and the same regression is used here on two states), and risk under the two-factor
+model.
+"""
+
+
+def mean_reversion(res: Path) -> str:
+    r1, r2 = read(res, "kappa_result_1y")[0], read(res, "kappa_result_2y")[0]
+    s1, s2 = read(res, "kappa_scan_1y"), read(res, "kappa_scan_2y")
+    f1 = read(res, "kappa_fit_1y")
+    fig, ax = plt.subplots(figsize=(5.6, 3.2))
+    ax.plot([100 * k for k in col(s1, "kappa")], col(s1, "rms_bp"), color=BLUE, label="second strip: 1Y tenor")
+    ax.plot([100 * k for k in col(s2, "kappa")], col(s2, "rms_bp"), color=ORANGE, label="second strip: 2Y tenor")
+    ax.set_title("Error on the second strip against mean reversion")
+    ax.set_xlabel("mean reversion κ, %")
+    ax.set_ylabel("RMS error, bp of normal vol")
+    ax.set_ylim(0, 30)
+    ax.legend()
+    plot = save(fig, "kappa_scan.png")
+    body = [
+        ["1Y", f"{float(r1['kappa']):.2%}", f"{float(r1['rms_bp']):.2f}", r1["strip_error_bp"], f"{float(r1['bermudan_bp']):.2f}"],
+        ["2Y", f"{float(r2['kappa']):.2%}", f"{float(r2['rms_bp']):.2f}", r2["strip_error_bp"], f"{float(r2['bermudan_bp']):.2f}"],
+    ]
+    errs = ", ".join(f"{float(r['error_bp']):+.1f}" for r in f1)
+    ref = float(r1["bermudan_at_reference_bp"])
+    return f"""## 10. Marking the mean reversion
+
+Sections 4 and 6 left κ as an input: the co-terminal strip is repriced at any κ, and the Bermudan moves by
+tens of basis points with it. A second set of swaptions with the same expiries and a different tenor does
+see κ. Given ζ(t), the model vol of a short swap starting at t scales with e^(−κt), while the co-terminal
+swap's vol is held fixed by the calibration. So κ is chosen to minimise the error on the second set,
+re-bootstrapping ζ to the co-terminal strip at every trial value.
+
+{table(["Second strip (expiries 1Y–9Y)", "κ", "RMS error on it (bp)", "Co-terminal strip error (bp)", "Bermudan (bp)"], body)}
+
+{plot}
+
+- The objective has a clear interior minimum: unlike the two-factor shape of section 9, κ is identified.
+- The two choices of second strip give {float(r1["kappa"]):.2%} and {float(r2["kappa"]):.2%}, and Bermudan prices {abs(float(r1["bermudan_bp"]) - float(r2["bermudan_bp"])):.1f} bp apart
+  (the reference κ = 3% gives {ref:.2f} bp). That spread is what is left of the 76 bp range of section 6
+  once κ is marked.
+- One number cannot reprice nine instruments. The errors on the 1Y-tenor strip, by expiry, are
+  {errs} bp:
+  positive at the short end and negative in the middle. That pattern is what a time-dependent mean
+  reversion, or a second factor, would be fitted to.
+"""
+
+
+def xva(res: Path) -> str:
+    credit = read(res, "xva_credit")
+    swp = read(res, "xva_swap")
+    swp_sum = read(res, "xva_swap_summary")
+    book = read(res, "xva_book")
+    port = read(res, "xva_portfolio")
+    tab = read(res, "xva_table")
+    eng = read(res, "xva_engine")[0]
+    ber = read(res, "xva_bermudan")
+    ber_sum = read(res, "xva_bermudan_summary")[0]
+    cs01 = read(res, "xva_cs01")
+    delta = read(res, "xva_delta")
+    timing = {r["method"]: float(r["ms"]) for r in read(res, "xva_delta_timing")}
+
+    cpty = [r for r in credit if r["name"] == "counterparty"]
+    credit_body = [[f"{r['maturity']}Y", f"{float(r['spread_bp']):.0f}", f"{float(r['hazard_pct']):.2f}", f"{float(r['survival_pct']):.1f}"] for r in cpty]
+    own = [r for r in credit if r["name"] == "own"]
+    reprice = max(abs(float(r["repriced_spread_bp"]) - float(r["spread_bp"])) for r in credit)
+
+    swp_body = [[f"{float(r['time']):.2f}", f"{float(r['epe_closed_bp']):.1f}", f"{float(r['epe_mc_bp']):.1f} ± {float(r['mc_se_bp']):.1f}", f"{float(r['ene_closed_bp']):.1f}", f"{float(r['ene_mc_bp']):.1f}"] for r in swp if float(r["time"]) > 0.5]
+    sum_body = [[r["method"], f"{float(r['cva_bp']):.2f}", f"{float(r['dva_bp']):.2f}", f"{float(r['fca_bp']):.2f}", f"{float(r['fba_bp']):.2f}"] for r in swp_sum]
+
+    book_body = [[r["trade"], f"{r['tenor_years']}Y", r["fixed_rate_pct"], r["side"], r["notional"], f"{float(r['value_bp']):+.1f}"] for r in book]
+    value = sum(float(r["value_bp"]) for r in book)
+
+    def cell(x: str) -> str:
+        return f"{float(x):.2f}" if x else "—"
+
+    tab_body = [[r["case"].capitalize(), cell(r["cva_bp"]), cell(r["dva_bp"]), cell(r["fca_bp"]), cell(r["fba_bp"])] for r in tab]
+    cva = {r["case"]: float(r["cva_bp"]) for r in tab}
+    gross, net = cva["no netting agreement"], cva["netted; no collateral"]
+    csa0, csa20, thr, mta = cva["zero threshold; 10-day margin period"], cva["zero threshold; 20-day margin period"], cva["threshold 50 bp of notional"], cva["minimum transfer 10 bp"]
+
+    t = col(port, "time")
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(9.4, 3.3))
+    a1.plot(t, col(port, "gross_epe_bp"), color=ORANGE, label="no netting: sum of the trades")
+    a1.plot(t, col(port, "epe_bp"), color=BLUE, label="netted")
+    a1.plot(t, [-x for x in col(port, "ene_bp")], color=AQUA, label="netted, negative (sign flipped)")
+    a1.set_title("Expected exposure of the book")
+    a1.set_xlabel("years")
+    a1.set_ylabel("discounted, bp of notional")
+    a1.legend()
+    a2.plot(t, col(port, "csa_threshold_bp"), color=ORANGE, linewidth=1.2, label="threshold 50 bp")
+    a2.plot(t, col(port, "csa_20d_bp"), color=AQUA, linewidth=1.2, label="zero threshold; 20-day margin period")
+    a2.plot(t, col(port, "csa_zero_bp"), color=BLUE, linewidth=1.2, label="zero threshold; 10-day margin period")
+    a2.set_title("With collateral")
+    a2.set_xlabel("years")
+    a2.legend()
+    plot_book = save(fig, "xva_book.png")
+    clean = [float(r["csa_zero_bp"]) for r in port if r["coupon_date"] == "0" and float(r["time"]) > 0]
+    spike = [float(r["csa_zero_bp"]) for r in port if r["coupon_date"] == "1"]
+
+    bt = col(ber, "time")
+    fig, ax = plt.subplots(figsize=(6.0, 3.3))
+    ax.stackplot(bt, col(ber, "option_epe_bp"), col(ber, "swap_epe_bp"), colors=[BLUE, AQUA], alpha=0.85, labels=["still an option", "exercised: the remaining swap"])
+    ax.plot(bt[1:], col(ber, "underlying_swap_epe_bp")[1:], "o--", color=ORANGE, linewidth=1.2, label="the underlying swap held from today")
+    ax.set_title("Expected exposure of a long Bermudan (10nc1 payer, 3.50%)")
+    ax.set_xlabel("years")
+    ax.set_ylabel("discounted, bp of notional")
+    ax.legend(loc="upper right")
+    plot_ber = save(fig, "xva_bermudan.png")
+    ber_body = [[f"{float(r['time']):.2f}", f"{float(r['epe_bp']):.1f} ± {float(r['se_bp']):.1f}", f"{float(r['option_epe_bp']):.1f}", f"{float(r['swap_epe_bp']):.1f}", f"{float(r['ene_bp']):.1f}", f"{float(r['exercised_pct']):.0f}%", f"{float(r['underlying_swap_epe_bp']):.1f}"] for r in ber]
+
+    cs_body = [[r["quote"], f"{float(r['swap_cva_cs01_bp']):+.4f}", f"{float(r['book_cva_cs01_bp']):+.4f}"] for r in cs01]
+    cs_swap, cs_book = sum(float(r["swap_cva_cs01_bp"]) for r in cs01), sum(float(r["book_cva_cs01_bp"]) for r in cs01)
+
+    worst = max(abs(float(r["adjoint"]) - float(r["bump_model_fixed"])) for r in delta)
+    tot_adj, tot_fix, tot_rec = (sum(float(r[k]) for r in delta) for k in ("adjoint", "bump_model_fixed", "bump_recalibrated"))
+    big = sorted(delta, key=lambda r: -abs(float(r["adjoint"])))[:6]
+    order = {r["quote"]: i for i, r in enumerate(delta)}
+    big.sort(key=lambda r: order[r["quote"]])
+    delta_body = [[r["quote"], f"{float(r['adjoint']):+.4f}", f"{float(r['bump_model_fixed']):+.4f}", f"{float(r['bump_recalibrated']):+.4f}"] for r in big]
+    delta_body.append(["**All 37 quotes**", f"**{tot_adj:+.4f}**", f"**{tot_fix:+.4f}**", f"**{tot_rec:+.4f}**"])
+    time_body = [
+        ["One CVA", f"{timing['one CVA']:.2f}", "1×"],
+        ["Delta, adjoint", f"{timing['adjoint']:.2f}", f"{timing['adjoint'] / timing['one CVA']:.1f}×"],
+        ["Delta, bump with the model fixed", f"{timing['bump (model fixed)']:.0f}", f"{timing['bump (model fixed)'] / timing['one CVA']:.0f}×"],
+        ["Delta, bump and re-calibrate", f"{timing['bump (recalibrated)']:.0f}", f"{timing['bump (recalibrated)'] / timing['one CVA']:.0f}×"],
+    ]
+
+    return f"""## 11. XVA: from exposure to price
+
+Section 8 stopped at one swap's uncollateralised exposure profile. This section prices it: a credit curve,
+a netting set, collateral, a Bermudan, and the sensitivities. The model is the one-factor LGM of section 4
+(κ = 3%, calibrated to the 10-year co-terminal strip). All exposures are discounted expectations of
+deflated values, so CVA is exposure weighted by default probabilities with no further discounting.
+
+### 11.1 The credit curve
+
+Hazard rates, constant between CDS maturities, bootstrapped so that each quoted spread makes its CDS worth
+zero (quarterly premiums with accrual on default, recovery 40%). The counterparty's curve:
+
+{table(["CDS maturity", "Spread (bp)", "Hazard rate on the interval (%)", "Survival to maturity (%)"], credit_body, "lrrr")}
+
+Both curves reprice their quotes to {"machine precision" if reprice < 1e-9 else f"{reprice:.0e} bp"}. Our own curve, for DVA, is {float(own[0]["spread_bp"]):.0f} bp at one year rising to
+{float(own[-1]["spread_bp"]):.0f} bp at ten. The funding spread for FVA is a flat 60 bp. The spreads are illustrative, not a market's.
+
+### 11.2 One swap: the engine against a closed form
+
+For a single swap the expected positive exposure on a coupon date is a European swaption on the remaining
+swap, so its CVA is a strip of swaptions with no simulation error. The Monte Carlo engine, which revalues
+the swap on every path, must reproduce it. 10-year payer at 3.50%, 100,000 paths:
+
+{table(["Years", "EPE, closed form (bp)", "EPE, engine (bp)", "ENE, closed form (bp)", "ENE, engine (bp)"], swp_body, "rrrrr")}
+
+{table(["Method", "CVA (bp)", "DVA (bp)", "FCA (bp)", "FBA (bp)"], sum_body)}
+
+CVA is the expected loss if the counterparty defaults while owing us; DVA is the mirror image on our own
+default; FCA and FBA are the cost and benefit of funding the uncollateralised asset and liability at our
+spread. Payer and receiver are each other's mirror: one side's CVA exposure is the other's DVA exposure,
+which is tested.
+
+### 11.3 A netting set
+
+Eight swaps with one counterparty (values today in bp of a unit notional; the book is worth {value:+.1f} bp):
+
+{table(["Trade", "Tenor", "Fixed rate %", "Side", "Notional", "Value (bp)"], book_body, "rrrlrr")}
+
+Exposure is simulated on {eng["exposure_dates"]} dates (quarterly, plus every coupon date) with {int(eng["paths"]):,} paths; one run takes
+{float(eng["ms"]) / 1000:.1f} s.
+
+{plot_book}
+
+{table(["Agreement", "CVA (bp)", "DVA (bp)", "FCA (bp)", "FBA (bp)"], tab_body)}
+
+- **Netting cuts CVA from {gross:.1f} to {net:.1f} bp**, a factor of {gross / net:.1f}. Without a netting agreement each trade is a
+  separate claim and the offsetting payers and receivers both count; with one, only the net does.
+- **Collateral with a zero threshold cuts it again to {csa0:.2f} bp, and not to zero.** What is left is the
+  move of the book over the 10-day margin period of risk, during which no more collateral arrives.
+  Doubling the period raises CVA by a factor of {csa20 / csa0:.2f}. A pure diffusion would give √2 = 1.41; the rest is
+  the coupon effect below, which does not scale with the period.
+- **A threshold is uncollateralised exposure by design:** 50 bp of notional leaves {thr:.2f} bp of CVA.
+- **A minimum transfer amount barely matters** ({mta:.2f} against {csa0:.2f} bp). A call that is not made leaves a
+  small value uncollateralised in both directions, so to first order it adds as much as it removes.
+- **Collateralised exposure spikes on coupon dates.** Away from them the residual exposure averages
+  {sum(clean) / len(clean):.1f} bp; on them, {sum(spike) / len(spike):.1f} bp. When a coupon rolls off, the book's value jumps by the net
+  coupon while the collateral held was called on the value before it. This is the part of collateralised
+  exposure a diffusion-only argument misses.
+
+### 11.4 The Bermudan: an option that turns into a swap
+
+A swap's future value is a known function of the state. A Bermudan's is not: on each path it is either
+still an option, worth the larger of exercise and continuation, or it has been exercised and the holder
+owns the remaining swap. The continuation value is computed as a function of the state at every exercise
+date by backward induction with exact Gaussian transitions, and paths are then exercised optimally.
+
+The same simulation reproduces the price: {float(ber_sum["grid_price_bp"]):.2f} bp from the grid and {float(ber_sum["simulated_price_bp"]):.2f} ± {float(ber_sum["simulated_se_bp"]):.2f} bp from the
+paths, against {float(ber_sum["pde_price_bp"]):.2f} bp from the PDE of section 5.
+
+{table(["Years", "EPE (bp)", "of which option", "of which swap", "ENE (bp)", "Exercised by then", "Underlying swap's EPE (bp)"], ber_body, "rrrrrrr")}
+
+{plot_ber}
+
+- **Before the first exercise date the exposure is the option's price**, {float(ber[0]["epe_bp"]):.0f} bp, far above the
+  underlying swap's exposure at the same dates. The option is an asset on every path; the swap is one on
+  about half of them.
+- **Exercise replaces option exposure with swap exposure.** By year 5, {float(ber[5]["exercised_pct"]):.0f}% of paths have exercised
+  and {float(ber[5]["swap_epe_bp"]) / float(ber[5]["epe_bp"]):.0%} of the exposure is the swap's. At the last date the two profiles meet: the option is gone.
+- **Negative exposure appears only after exercise**, on paths where rates fell after the holder entered
+  the swap: {float(ber[-1]["ene_bp"]):.1f} bp at the end, against the swap's own which is several times larger. The
+  holder chose when to enter.
+- **CVA of the Bermudan is {float(ber_sum["cva_bp"]):.1f} bp against {float(ber_sum["swap_cva_bp"]):.1f} bp for the swap**, and its DVA is {float(ber_sum["dva_bp"]):.1f} bp against
+  {float(ber_sum["swap_dva_bp"]):.1f} bp. Buying the option is taking more credit risk on the counterparty and giving them
+  almost none in return.
+
+Physical settlement is assumed. A cash-settled Bermudan has no exposure after exercise.
+
+### 11.5 Sensitivities
+
+**Credit.** Change in CVA for +1 bp on each CDS quote, re-bootstrapping the hazard curve. Exposure does
+not change, so this costs nothing.
+
+{table(["Quote", "Swap CVA (bp per bp)", "Book CVA (bp per bp)"], cs_body)}
+
+Parallel: {cs_swap:+.3f} and {cs_book:+.3f}. The short-maturity entries are negative. Raising the 1-year spread alone
+moves default probability from later years, where the exposure is, to the first year, where there is
+little. A CVA hedge with a single CDS maturity would get this wrong.
+
+**Rates.** Delta of the swap's CVA to each of the 37 par quotes the curves are built from. The swaption
+weights the strip was priced with are already its derivatives to each bond (the exercise boundary is
+optimal, so its own sensitivity drops out), which makes CVA linear in the discount factors with known
+coefficients: one tape sweep and one transposed solve with the bootstrap Jacobian.
+
+{table(["Quote (largest six)", "Adjoint", "Bump, model fixed", "Bump, re-calibrated"], delta_body)}
+
+{table(["", "Time (ms)", "Relative"], time_body)}
+
+- The adjoint ladder is the exact derivative: the tests match it to a small central bump to 2e-10. The
+  bumps in the table are one-sided 1 bp shifts and differ from it by their convexity, at most {worst:.0e} bp per bp.
+- The adjoint costs the time of {timing["adjoint"] / timing["one CVA"]:.1f} CVA evaluations. Bumping needs 37 curve rebuilds and revaluations:
+  **about {timing["bump (model fixed)"] / timing["adjoint"]:.0f}× slower**.
+- **Which delta is a choice.** Bumping with the model's variance held fixed gives {tot_fix:+.3f} bp per bp in total;
+  re-calibrating to the same normal vols after each bump gives {tot_rec:+.3f}, {abs(tot_rec / tot_fix - 1):.0%} less, and the buckets move by
+  more than the total. The first is the delta of a desk that hedges vega separately; the second folds
+  part of the vega into the delta. Neither is wrong, but they are not the same hedge.
+
+Not modelled: wrong-way risk (default and exposure are independent), initial margin, bilateral survival
+weighting, more than one currency, a second factor in the exposure engine. The engine values a floating
+coupon in progress at the term rate fixed at its period start.
+"""
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--exe", default=str(ROOT / "build" / "dev" / "cpp" / "examples" / "rl_analysis"))
@@ -608,7 +983,7 @@ uv run python tools/make_results.py
 ```
 
 """
-    sections = [curves(res), swap_risk(res), vol(res), lgm(res), bermudan(res), risk(res), exposure(res)]
+    sections = [curves(res), swap_risk(res), vol(res), lgm(res), bermudan(res), risk(res), exposure(res), two_factor(res), mean_reversion(res), xva(res)]
     (ROOT / "docs" / "RESULTS.md").write_text(head + "\n".join(sections), encoding="utf-8")
     print(f"wrote docs/RESULTS.md and {len(list(IMG.glob('*.png')))} plots")
 

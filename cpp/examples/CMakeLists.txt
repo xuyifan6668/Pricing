@@ -18,5 +18,5 @@ set_target_properties(rl_demo_vol PROPERTIES FOLDER "examples")
 
 # Every number and plot in docs/RESULTS.md comes from this one executable (tools/make_results.py).
 add_executable(rl_analysis rl_analysis.cpp)
-target_link_libraries(rl_analysis PRIVATE rl::pricers)
+target_link_libraries(rl_analysis PRIVATE rl::pricers rl::xva)
 set_target_properties(rl_analysis PROPERTIES FOLDER "examples")
