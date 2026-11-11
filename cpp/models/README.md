@@ -1,14 +1,17 @@
 # models
 
-The LGM one-factor model, European swaptions under it, and calibration to a co-terminal strip.
+The LGM one-factor and G2++ two-factor models, European swaptions under them, and their calibration.
 
 | Piece | File |
 |---|---|
 | The model: H(t), ζ(t), deflated bond, Hull–White mapping | `lgm.hpp` |
 | A swap as a list of zero-coupon bonds; exercise rights | `flows.hpp` |
 | Swaption price under LGM (Jamshidian); market (Bachelier) price; implied vol | `lgm_swaption.hpp` |
-| Bootstrap of ζ to a swaption strip | `lgm_calibration.hpp` |
+| Bootstrap of ζ to a swaption strip; mean reversion marked to a second strip | `lgm_calibration.hpp` |
 | The USD market used everywhere: bootstrapped curves + fitted cube | `usd_market.hpp` |
+| G2++: covariance of the two states, deflated bond, forward-rate correlation | `g2pp.hpp` |
+| Swaption price under G2++: closed form in one direction, quadrature in the other | `g2pp_swaption.hpp` |
+| G2++ shape from the ATM matrix; volatility scale bootstrapped to a strip | `g2pp_calibration.hpp` |
 
 ## The model in four lines
 
@@ -24,3 +27,15 @@ accumulated variance. The discount curve D is an input, so the curve is fitted b
 - A one-period swaption reproduces the Hull–White zero-bond option formula.
 - The strip reprices to 1e-6 bp for κ from −1% to 10%; κ changes ζ but not the calibrated prices.
 - An inconsistent strip (one needing variance to fall) is flagged and left visibly mispriced.
+
+## The second factor
+
+Two driftless Gaussian states with covariance C(t); the deflated bond is `D(T) exp(−H(T)·x − ½ H(T)ᵀ C(t) H(T))`.
+The shape (two mean reversions, σ₂/σ₁, ρ) sets how rates of different maturities and different dates are
+correlated; a common volatility scale s(t) sets the level and is bootstrapped to a strip like ζ.
+
+Tested: the deflated bond is a martingale; the bond option reproduces Brigo–Mercurio's formula; the swaption
+formula equals two-dimensional integration, has converged in the quadrature order and satisfies put–call
+parity; with the second factor off, or with two perfectly correlated factors of one speed, prices equal the
+one-factor model's; the fit recovers a two-factor model's own vols; the scale reprices a strip to 1e-6 bp
+for any shape and reduces to the one-factor calibration; an inconsistent strip is flagged.

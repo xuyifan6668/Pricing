@@ -71,6 +71,32 @@ gap between them measures the quality of the exercise rule without reference to 
 **No fast-math.** Reassociation would make results depend on compiler and inlining; determinism is worth
 more than the speed here.
 
+**The two-factor model reuses the one-factor form, and picks its numeraire per pricer.** G2++ is written
+as a driftless Gaussian state with a deflated bond that is one exponential, so calibration by bootstrap and
+exact simulation carry over. Only differences of the loadings H matter, which is a free choice of
+numeraire. Under the textbook one, a fast factor makes the state variance grow like e^{2κt} and deflated
+values become products of enormous and tiny numbers: the first version priced a 9-year expiry at zero. The
+European pricer measures loadings from the exercise date and the Monte Carlo from the last cashflow date.
+*Rejected:* Brigo and Mercurio's conditioning on the first factor for the swaption integral; it stops
+converging when the factors are highly correlated. The closed form is taken along the direction that
+decides exercise instead, which needs four quadrature points and is exact in the one-factor limit.
+
+**Exposure is computed in the pricing measure, in deflated units, and checked against a price.** The
+engine reuses the model the Bermudan is priced with, so an expected exposure is a price: one swap's
+profile is a strip of swaptions, and the Bermudan's first-date exposure is its PDE value. Every exposure
+number therefore has a closed form or an independent pricer to be wrong against. *Rejected:* a
+real-world-measure engine with its own dynamics; it would be the right tool for limits and PFE, and would
+have nothing in this repository to validate it.
+
+**The Bermudan's exposure uses a grid, not the regression.** The Longstaff–Schwartz fit is made on
+in-the-money paths only and is trusted only to decide exercise, not as a value. Exposure needs the
+option's value on every path, so continuation values are computed by backward induction with exact
+Gaussian transitions, which also gives the price to 0.001 bp of the PDE.
+
+**CVA delta holds the model fixed, and says so.** The adjoint route differentiates through the discount
+factors only; re-calibrating after each bump gives a ladder about 5% different in total. Both are in
+RESULTS §11.5 because the difference is a hedging decision, not a numerical error.
+
 ## What was deliberately left out
 
 Python bindings, an Excel add-in, a parallel risk engine, a generic product/model registry, payoff
