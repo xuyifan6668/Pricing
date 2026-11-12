@@ -1,6 +1,6 @@
 # rl_pricers: the Bermudan swaption priced three ways under LGM (PDE, least-squares Monte Carlo lower
-# bound, Andersen–Broadie upper bound) and by Monte Carlo under G2++, swap exposure profiles, and
-# bump / adjoint risk.
+# bound, Andersen–Broadie upper bound) and by Monte Carlo under G2++, a CMS spread option under G2++,
+# swap exposure profiles, and bump / adjoint risk.
 rl_add_module(
   NAME pricers
   DEPS rl::core rl::math rl::math_real rl::market rl::instruments rl::linear rl::vol rl::bootstrap rl::models
@@ -9,12 +9,14 @@ rl_add_module(
     src/bermudan_pde.cpp
     src/bermudan_mc.cpp
     src/bermudan_g2pp.cpp
+    src/cms_spread.cpp
     src/exposure.cpp
     src/risk.cpp
   TEST_SOURCES
     test/test_bermudan_pde.cpp
     test/test_bermudan_mc.cpp
     test/test_bermudan_g2pp.cpp
+    test/test_cms_spread.cpp
     test/test_exposure.cpp
     test/test_risk.cpp
 )
