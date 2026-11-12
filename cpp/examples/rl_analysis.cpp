@@ -20,6 +20,7 @@
 #include "rl/pricers/bermudan_g2pp.hpp"
 #include "rl/pricers/bermudan_mc.hpp"
 #include "rl/pricers/bermudan_pde.hpp"
+#include "rl/pricers/cms_spread.hpp"
 #include "rl/pricers/exposure.hpp"
 #include "rl/pricers/risk.hpp"
 #include "rl/vol/arbitrage.hpp"
@@ -450,6 +451,41 @@ void twoFactor(const std::filesystem::path& out, const models::UsdMarket& m) {
     row("second factor off", G2pp(kKappa, 1.0, 0.01, 0.0, 0.0));
     for (double rho : {0.9, 0.5, 0.0, -0.5, -0.9}) row("fast second factor", G2pp(kKappa, 0.40, 0.01, 0.01, rho));
     row("fitted to the ATM matrix", G2pp(fit2.model.kappa1(), fit2.model.kappa2(), fit2.model.sigma1(), fit2.model.sigma2(), fit2.model.rho()));
+
+    // --- A CMS spread option: the product that prices the correlation ------------------------------
+    // 5-year expiry on the 10-year minus the 2-year swap rate. Every model below reprices the 5Yx2Y
+    // and 5Yx10Y swaptions exactly, so both rates' volatilities agree; what differs is how the two
+    // rates move together.
+    {
+        const auto pair = models::makeAtmMatrix(m.asOf, m.curves, m.cube, {5}, {2, 10});
+        const models::ExerciseRight& shortSwap = pair[0].right;
+        const models::ExerciseRight& longSwap = pair[1].right;
+        const double df = m.curves.discount().df(longSwap.time);
+        const double curveSpread = longSwap.forwardRate() - shortSwap.forwardRate();
+        Csv c(out, "cms_spread.csv",
+              "model,rho,sigma_ratio,attainable,short_vol_error_bp,long_vol_error_bp,rate_correlation,spread_vol_bp,forward_spread_bp,price_bp,price_minus25_bp,price_plus25_bp");
+        auto report2 = [&](const char* name, const G2pp& g) {
+            auto err = [&](const models::CalibrationInstrument& ci) {
+                return (models::impliedNormalVol(ci.right, models::g2ppSwaptionPrice(g, ci.right)) - ci.marketVol) * kBp;
+            };
+            const pricers::CmsSpreadResult atm = pricers::priceCmsSpread(g, longSwap, shortSwap, curveSpread, true, df);
+            std::fprintf(c.f, "%s,%.2f,%.4f,1,%.1e,%.1e,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f\n", name, g.rho(), g.sigma2() / g.sigma1(), err(pair[0]), err(pair[1]), atm.rateCorrelation,
+                         atm.spreadVolBp, atm.forwardSpread * kBp, atm.price * kBp, pricers::priceCmsSpread(g, longSwap, shortSwap, curveSpread - 0.0025, true, df).price * kBp,
+                         pricers::priceCmsSpread(g, longSwap, shortSwap, curveSpread + 0.0025, true, df).price * kBp);
+        };
+        report2("one factor", models::calibrateOneFactorToPair(pair[0], pair[1]));
+        for (double rho : {-0.97, -0.95, -0.90, -0.85, -0.80, -0.75, -0.60, -0.30, 0.0}) {
+            try {
+                report2("two factors", models::calibrateG2ppToPair(fit2.model.kappa1(), fit2.model.kappa2(), rho, pair[0], pair[1], 0.5));
+            } catch (const CalibrationError&) {
+                std::fprintf(c.f, "two factors,%.2f,,0,,,,,,,,\n", rho);
+            }
+        }
+        report2("fitted to the ATM matrix", fit2.model);
+        Csv t(out, "cms_spread_info.csv", "curve_spread_bp,short_forward_pct,long_forward_pct,short_vol_bp,long_vol_bp,ms_per_price");
+        std::fprintf(t.f, "%.3f,%.4f,%.4f,%.3f,%.3f,%.2f\n", curveSpread * kBp, shortSwap.forwardRate() * 100.0, longSwap.forwardRate() * 100.0, pair[0].marketVol * kBp,
+                     pair[1].marketVol * kBp, timeMs([&] { (void)pricers::priceCmsSpread(fit2.model, longSwap, shortSwap, curveSpread, true, df); }));
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -657,6 +693,53 @@ void xvaSection(const std::filesystem::path& out, const models::UsdMarket& m) {
         std::fprintf(t.f, "adjoint,%.4f\n", timeMs([&] { (void)xva::swapCvaDeltaAdjoint(m, model, ref, hazard, recovery); }));
         std::fprintf(t.f, "bump (model fixed),%.4f\n", timeMs([&] { (void)pricers::parDeltaBump(m, frozen); }));
         std::fprintf(t.f, "bump (recalibrated),%.4f\n", timeMs([&] { (void)pricers::parDeltaBump(m, recalibrated); }));
+    }
+
+    // --- Two factors: the same book and the same Bermudan when rates can decorrelate --------------------
+    {
+        using models::G2pp;
+        // Shape from the ATM matrix (section 9.2), level from the 10-year co-terminal strip, as for the
+        // one-factor model. Every model here reprices that strip, so the 10-year swap's own exposure on
+        // its coupon dates is the same in all of them.
+        models::G2ppFitOptions fo;
+        fo.kappa1 = 0.6;
+        fo.rho = -0.9;
+        const G2pp shape = models::fitG2pp(models::makeAtmMatrix(m.asOf, m.curves, m.cube, {1, 2, 3, 5, 7, 10}, {1, 2, 5, 10, 20}), fo).model;
+        const std::vector<double> couponTimes = xva::periodStartTimes(ref, m.curves);
+        Csv c(out, "xva_twofactor.csv", "model,rho,swap_cva_bp,book_cva_bp,book_gross_cva_bp,book_dva_bp");
+        xva::ExposureOptions e2;
+        e2.paths = 50000;
+        auto cvaOf = [&](const std::vector<double>& t, const std::vector<double>& epe) { return xva::creditAdjustment(t, epe, in.counterparty, recovery) * kBp; };
+        {
+            const xva::ExposureProfile a = xva::simulateExposure(model, {ref}, m.curves, couponTimes, std::nullopt, e2);
+            std::fprintf(c.f, "one factor,,%.4f,%.4f,%.4f,%.4f\n", cvaOf(a.times, a.epe), cvaOf(times, base.epe), cvaOf(times, base.grossEpe),
+                         xva::computeXva(times, base.epe, base.ene, in).dva * kBp);
+        }
+        auto row = [&](const char* name, double rho) {
+            const pricers::CalibratedBermudanG2pp cal =
+                pricers::calibrateBermudanG2pp(m, ref, 1.0, 0, G2pp(shape.kappa1(), shape.kappa2(), shape.sigma1(), shape.sigma2(), rho));
+            const G2pp& g = cal.calibration.model;
+            const xva::ExposureProfile a = xva::simulateExposure(g, {ref}, m.curves, couponTimes, std::nullopt, e2);
+            const xva::ExposureProfile b = xva::simulateExposure(g, trades, m.curves, times, std::nullopt, e2);
+            std::fprintf(c.f, "%s,%.2f,%.4f,%.4f,%.4f,%.4f\n", name, rho, cvaOf(a.times, a.epe), cvaOf(b.times, b.epe), cvaOf(b.times, b.grossEpe),
+                         xva::computeXva(b.times, b.epe, b.ene, in).dva * kBp);
+            return cal;
+        };
+        for (double rho : {0.5, 0.0, -0.5, -0.9}) row("two factors", rho);
+        const pricers::CalibratedBermudanG2pp fitted = row("two factors; fitted shape", shape.rho());
+
+        xva::BermudanExposureG2ppOptions bo;
+        bo.trainingPaths = 100000;
+        bo.paths = 400000;
+        const xva::BermudanExposure e = xva::bermudanExposureG2pp(fitted.calibration.model, fitted.rights, bo);
+        Csv b(out, "xva_bermudan_2f.csv", "time,epe_bp,se_bp,option_epe_bp,swap_epe_bp,ene_bp");
+        for (std::size_t i = 0; i < e.times.size(); ++i)
+            std::fprintf(b.f, "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\n", e.times[i], e.epe[i] * kBp, e.epeStandardError[i] * kBp, e.optionEpe[i] * kBp, (e.epe[i] - e.optionEpe[i]) * kBp,
+                         e.ene[i] * kBp);
+        const xva::XvaResult r = xva::computeXva(e.times, e.epe, e.ene, in);
+        Csv t(out, "xva_bermudan_2f_summary.csv", "price_bp,price_se_bp,cva_bp,dva_bp,rho,kappa1,kappa2");
+        std::fprintf(t.f, "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n", e.price * kBp, e.simulatedPriceStandardError * kBp, r.cva * kBp, r.dva * kBp, shape.rho(), shape.kappa1(),
+                     shape.kappa2());
     }
 }
 

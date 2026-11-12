@@ -366,6 +366,10 @@ def bermudan(res: Path) -> str:
     axes[2].set_ylabel("standard error, bp")
     axes[2].legend()
     mc_plot = save(fig, "lsmc.png")
+    err = {int(r["steps"]): float(r["error_rannacher_bp"]) for r in conv}
+    steps = sorted(err)
+    drops = [err[a] / err[b] for a, b in zip(steps, steps[1:])]
+    deg0_loss = float(basis[0]["pde_bp"]) - float(basis[0]["lower_bp"])
     basis_rows = [[r["basis"], r["degree"], f"{float(r['lower_bp']):.2f} ± {float(r['lower_se_bp']):.2f}", f"{float(r['gap_bp']):.2f} ± {float(r['gap_se_bp']):.2f}"] for r in basis]
     pde_ref = float(basis[0]["pde_bp"])
     ratio = col(paths, "standard_error_no_antithetic_bp")[-1] / col(paths, "standard_error_bp")[-1]
@@ -408,7 +412,7 @@ the value of keeping the option. Prices are in basis points of notional; κ = 3%
   worth more than the option.
 - **Upper bound.** Andersen–Broadie: the dual formulation, with the martingale built from the same rule by
   nested simulation (2,000 outer × 500 inner paths).
-- **PDE.** Crank–Nicolson on a 1600 × 1600 grid, converged to about 0.003 bp, and confirmed to 0.001 bp
+- **PDE.** Crank–Nicolson on a 1600 × 1600 grid, converged to about {err[1600]:.3f} bp, and confirmed to 0.001 bp
   by an independent backward induction that integrates against the exact Gaussian transition density.
 - The three agree on every trade: the PDE lies within two standard errors of both bounds (the largest
   excursion is {excursion:.1f} standard errors), and the duality gap, which is measured much more precisely
@@ -417,7 +421,7 @@ the value of keeping the option. Prices are in basis points of notional; κ = 3%
 - The Bermudan is worth far more than its best single European: the right to choose the date is a large
   part of the value, more so out of the money.
 
-Wall-clock per pricing (PDE at 400 × 400, which is already within 0.05 bp):
+Wall-clock per pricing (PDE at 400 × 400, which is already within {err[400]:.2f} bp):
 
 {table(["Trade", "PDE (ms)", "LSMC, 4M paths (ms)", "Upper bound (ms)"], times)}
 
@@ -430,9 +434,9 @@ discounting terms: the change of numeraire has absorbed them.
 
 {pde_plot}
 
-- **Second order overall, not monotone.** The error falls 10,000-fold over a 64-fold refinement, but
-  unevenly: it depends on where the exercise boundary falls between grid nodes, so one doubling can do
-  nothing and the next cut the error sixteen-fold. Convergence has to be judged over several doublings.
+- **Second order overall, not monotone.** The error falls {err[steps[0]] / err[steps[-1]]:,.0f}-fold over a {steps[-1] // steps[0]}-fold refinement, but
+  unevenly: it depends on where the exercise boundary falls between grid nodes, so one doubling can change
+  it by a factor of {min(drops):.1f} and another by {max(drops):.0f}. Convergence has to be judged over several doublings.
 - **Rannacher start-up costs price accuracy here.** The textbook advice is to replace the first steps after
   each exercise date with implicit ones, to damp the oscillations Crank–Nicolson would otherwise carry. For
   this payoff the price is *more* accurate without it (middle panel): exercising creates a kink, not a
@@ -449,7 +453,7 @@ PDE reference {pde_ref:.2f} bp.
 
 {mc_plot}
 
-- **Degree 0** (continuation value = a constant, so the rule cannot see the state) loses about 9 bp, and
+- **Degree 0** (continuation value = a constant, so the rule cannot see the state) loses about {deg0_loss:.0f} bp, and
   the gap shows it without needing the PDE: the gap is a model-free measure of how good the rule is.
 - **Degree 1–2 is already enough** in a one-factor model; beyond degree 3 nothing improves. Regressing on
   the swap's value works as well as regressing on the state, and is the choice that carries over to models
@@ -593,6 +597,10 @@ def two_factor(res: Path) -> str:
     bounds = sorted({b.replace("kappa", "κ") for r in two for b in r["active_bounds"].split() if b})
     rms2 = [float(r["rms_bp"]) for r in two]
     corr2 = [float(r["corr_1y_10y"]) for r in two]
+    agree = sum(abs(float(r["rms_bp"]) - float(best["rms_bp"])) < 1e-3 for r in two)
+    others = [r for r in two if abs(float(r["rms_bp"]) - float(best["rms_bp"])) >= 1e-3]
+    stuck_bullet = ""
+    stuck = "".join(f" From {r['start'].replace('kappa1', 'κ₁').replace('rho', 'ρ')} it stops at {float(r['rms_bp']):.2f} bp with ρ = {float(r['rho']):+.2f}." for r in others)
     stalled = sum(r["status"] == "MaxIterations" for r in two)
     converged = f"{stalled} of the {len(two)} fits stopped at the iteration limit: the objective is flat along a valley." if stalled else "All fits converged."
 
@@ -615,6 +623,22 @@ def two_factor(res: Path) -> str:
     ber_body.append(["Shape fitted to the ATM matrix", f"{float(fitted['rho']):+.2f}", f"{float(fitted['corr_1y_10y']):.3f}", f"{float(fitted['price_bp']):.2f} ± {float(fitted['se_bp']):.2f}", f"{float(fitted['price_bp']) - europe:.1f}", fitted["strip_error_bp"]])
     prices = [float(r["price_bp"]) for r in scan]
     worst_strip = max(float(r["strip_error_bp"]) for r in ber)
+
+    if others:
+        stuck_bullet = f"- **Not every start gets there.**{stuck} The objective has a second,\n  one-factor-like basin, and Levenberg–Marquardt is a local method. Running several starts is part of the\n  calibration, not a diagnostic."
+    cms_all = read(res, "cms_spread")
+    info = read(res, "cms_spread_info")[0]
+    cms = [r for r in cms_all if r["attainable"] == "1" and r["model"] != "fitted to the ATM matrix"]
+    cms_fit = cms_all[-1]
+    cms_two = [r for r in cms if r["model"] == "two factors"]
+    cms_missing = [float(r["rho"]) for r in cms_all if r["attainable"] == "0"]
+    cms_prices = [float(r["price_bp"]) for r in cms_two]
+    cms_corrs = [float(r["rate_correlation"]) for r in cms_two]
+    cms_rhos = [float(r["rho"]) for r in cms_two]
+    cms_body = [
+        [{"fitted to the ATM matrix": "Fitted to the ATM matrix"}.get(r["model"], r["model"].capitalize()), "" if r["model"] == "one factor" else f"{float(r['rho']):+.2f}", "" if r["model"] == "one factor" else f"{float(r['sigma_ratio']):.2f}", f"{float(r['rate_correlation']):.3f}", f"{float(r['spread_vol_bp']):.1f}", f"{float(r['price_minus25_bp']):.1f}", f"{float(r['price_bp']):.1f}", f"{float(r['price_plus25_bp']):.1f}"]
+        for r in cms + [cms_fit]
+    ]
 
     fig, ax = plt.subplots(figsize=(5.8, 3.3))
     ax.axhline(pde, color=MUTED, linewidth=1.0, linestyle="--")
@@ -651,7 +675,7 @@ and exactly constant in the one-factor limit. The tests check the formula agains
 formula, against two-dimensional integration, and against the one-factor model when the second factor is
 switched off.
 
-### 9.2 Shape from the ATM matrix: what the second factor buys here, and what it does not
+### 9.2 Shape from the ATM matrix: what the second factor buys
 
 Both models are fitted to {len(fit)} ATM swaptions (expiries {expiries[0]}Y–{expiries[-1]}Y, tenors {tenors[0]}Y–{tenors[-1]}Y) with the same freedom in the
 level: one volatility scale per expiry row. What is left to explain is the tenor direction, which is where
@@ -663,17 +687,22 @@ Fit errors in bp of normal vol, one factor / two factors (best start), by expiry
 
 {table(["Expiry"] + [f"{t}Y" for t in tenors], err_body)}
 
-- The second factor improves the fit from {float(one["rms_bp"]):.2f} bp to {min(rms2):.2f} bp. That is a small gain for three extra
-  parameters.
-- **The shape is not identified by this matrix.** The four starts end at RMS errors between {min(rms2):.2f} and
-  {max(rms2):.2f} bp with different parameters, a forward-rate correlation anywhere from {min(corr2):.2f} to {max(corr2):.2f},
-  and a bound active every time ({", ".join(bounds)}). {converged}
-- The one-factor residuals have the same signs on every row: too low at the 1Y and 20Y tenors, too high
-  in between. That is a tenor shape one mean reversion cannot produce. The second factor removes part of
-  it at the short expiries and none of it at the long ones.
-- The vol screen is synthetic: it was generated from smooth SABR surfaces, not from a correlation
-  structure. Published calibrations to market data typically find ρ strongly negative; this matrix carries
-  no such information, and the fit says so instead of returning a confident number.
+- **The second factor takes the error from {float(one["rms_bp"]):.2f} bp to {min(rms2):.2f} bp.** One mean reversion can tilt the tenor
+  direction one way; it cannot produce a vol that is as high at 10 years as at 2 years and lower at 20.
+- **The shape is identified, and it is the one the data was built with.** {agree} of the {len(two)} starts end at the same
+  point: κ₁ = {float(best["kappa1"]):.1%}, κ₂ = {float(best["kappa2"]):.1%}, σ₂/σ₁ = {float(best["sigma_ratio"]):.2f}, ρ = {float(best["rho"]):+.2f}. The vol screen's ATM levels were
+  generated from a two-factor Gaussian model with a = 40%, b = 3%, η/σ = 0.79, ρ = −0.70
+  (`tools/gen_vol_quotes.py`), through the frozen-weights swap-rate formula and a smooth volatility scale.
+  The calibration uses exact pricing and a piecewise-constant scale, and the remaining {min(rms2):.2f} bp and the
+  small differences in the parameters are the distance between those two descriptions.
+{stuck_bullet}
+- With these parameters the instantaneous correlation between the 1-year and 10-year forward rates is
+  {float(best["corr_1y_10y"]):.2f}: far from the 1.00 a one-factor model assumes.
+
+This is a recovery test, not a market calibration: the screen is synthetic. What it shows is that the
+calibration finds a two-factor structure when one is there, and says so when it is not (an earlier
+version of the screen, generated from smooth surfaces with no correlation structure behind them, gave
+four different answers from four starts).
 
 ### 9.3 The Bermudan: the same Europeans, a different correlation
 
@@ -699,13 +728,43 @@ are correlated. Prices are Longstaff–Schwartz lower bounds on one million path
   makes recent shocks count for more than old ones, which is what extra mean reversion does, and the
   switch value rises. Negatively correlated, it offsets recent shocks, acts like negative mean reversion,
   and the value falls below the one-factor price.
-- With the shape fitted to the ATM matrix the Bermudan is {float(fitted["price_bp"]):.1f} bp, {abs(float(fitted["price_bp"]) - pde):.1f} bp from the one-factor price.
-  Given 9.2, that number is one point in a range the calibration set does not narrow. A desk closes it
-  with instruments that see correlation directly: Bermudan quotes, CMS spread options, or a second strip.
+- **With the shape fitted to the ATM matrix the Bermudan is {float(fitted["price_bp"]):.1f} bp, {abs(float(fitted["price_bp"]) - pde):.1f} bp {"below" if float(fitted["price_bp"]) < pde else "above"} the one-factor
+  price at κ = 3%.** Given 9.2 this is a calibrated number, not one point in a range. It is also close to
+  what the one-factor model gives once its mean reversion is marked (section 10), which is the same
+  information reaching the price by a cruder route.
 
 Not done: an upper bound for the two-factor price (the duality gap of the one-factor rule in section 5 was
 below one basis point, and the same regression is used here on two states), and risk under the two-factor
 model.
+
+### 9.4 A CMS spread option: the product that prices the correlation
+
+The option pays max(S₁₀ − S₂ − K, 0) in 5 years, where S₁₀ and S₂ are the 10-year and 2-year swap rates
+then. Its value is the variance of the spread, σ₁₀² + σ₂² − 2ρσ₁₀σ₂. The two volatilities are swaption
+vols; the correlation between the two rates is in no swaption price.
+
+Every model below reprices the 5Y×2Y and 5Y×10Y swaptions ({float(info["short_vol_bp"]):.1f} and {float(info["long_vol_bp"]):.1f} bp) exactly, so they agree on
+both volatilities. The strike is the spread of the two forward rates today, {float(info["curve_spread_bp"]):.1f} bp. Speeds are the
+fitted κ₁ and κ₂; for each ρ the level and σ₂/σ₁ are solved for.
+
+{table(["Model", "ρ (factors)", "σ₂/σ₁", "Rate correlation", "Spread vol (bp)", "Price, K − 25 bp", "Price, K (bp)", "Price, K + 25 bp"], cms_body, "lrrrrrrr")}
+
+- **One factor prices the option at its intrinsic value.** With both vols matched the two rates are
+  perfectly correlated, the spread has {float(cms[0]["spread_vol_bp"]):.1f} bp of volatility, and the {float(cms[0]["price_bp"]):.1f} bp that is left is the
+  convexity difference between the two rates, not optionality. The 25 bp out-of-the-money call is
+  worth {float(cms[0]["price_plus25_bp"]):.2f} bp.
+- **Two factors move the price from {min(cms_prices):.0f} to {max(cms_prices):.0f} bp** as ρ goes from {cms_rhos[-1]:+.2f} to {cms_rhos[0]:+.2f}, with both
+  swaptions repriced to 1e-12 bp throughout. The price is a direct reading of the rate correlation,
+  which runs from {max(cms_corrs):.2f} down to {min(cms_corrs):.2f}. This is why spread options are what a desk marks ρ to.
+- **The two swaption vols already bound ρ.** For ρ = {", ".join(f"{r:+.2f}" for r in cms_missing)} no σ₂/σ₁ reprices both: with these
+  speeds, a 10-year vol as high as the 2-year one needs strongly negatively correlated factors. The
+  calibration reports that instead of returning a best effort.
+- **The matrix-fitted model gives {float(cms_fit["price_bp"]):.1f} bp**, with a rate correlation of {float(cms_fit["rate_correlation"]):.2f}. It reprices the two
+  swaptions to {max(abs(float(cms_fit["short_vol_error_bp"])), abs(float(cms_fit["long_vol_error_bp"]))):.2f} bp, not exactly, and has a time-dependent volatility scale, so it is not on the line
+  of constant-parameter models above. That the ATM matrix alone leaves this much room ({float(cms_fit["price_bp"]):.0f} bp against
+  {min(cms_prices):.0f}–{max(cms_prices):.0f} bp) is the practical argument for calibrating to a spread option when one is traded.
+
+One payment at expiry with unit accrual, {float(info["ms_per_price"]):.0f} ms per price by two-dimensional quadrature.
 """
 
 
@@ -728,6 +787,8 @@ def mean_reversion(res: Path) -> str:
     ]
     errs = ", ".join(f"{float(r['error_bp']):+.1f}" for r in f1)
     ref = float(r1["bermudan_at_reference_bp"])
+    scan6 = col(read(res, "bermudan_kappa"), "bermudan_bp")
+    range6 = max(scan6) - min(scan6)
     return f"""## 10. Marking the mean reversion
 
 Sections 4 and 6 left κ as an input: the co-terminal strip is repriced at any κ, and the Bermudan moves by
@@ -740,14 +801,16 @@ re-bootstrapping ζ to the co-terminal strip at every trial value.
 
 {plot}
 
-- The objective has a clear interior minimum: unlike the two-factor shape of section 9, κ is identified.
-- The two choices of second strip give {float(r1["kappa"]):.2%} and {float(r2["kappa"]):.2%}, and Bermudan prices {abs(float(r1["bermudan_bp"]) - float(r2["bermudan_bp"])):.1f} bp apart
-  (the reference κ = 3% gives {ref:.2f} bp). That spread is what is left of the 76 bp range of section 6
-  once κ is marked.
+- The objective has a clear interior minimum: κ is identified by either strip.
+- The two choices of second strip give {float(r1["kappa"]):.2%} and {float(r2["kappa"]):.2%}, and Bermudan prices {abs(float(r1["bermudan_bp"]) - float(r2["bermudan_bp"])):.1f} bp apart.
+  That spread is what is left of the {range6:.0f} bp range of section 6 once κ is marked.
+- **The reference κ = 3% used in sections 4–8 was a convention, and the market disagrees with it.** Marked,
+  κ is close to zero and the Bermudan is {ref - float(r1["bermudan_bp"]):.1f} bp lower ({float(r1["bermudan_bp"]):.2f} against {ref:.2f} bp). The two-factor
+  model fitted to the whole ATM matrix moves the price the same way, and further (section 9.3).
 - One number cannot reprice nine instruments. The errors on the 1Y-tenor strip, by expiry, are
-  {errs} bp:
-  positive at the short end and negative in the middle. That pattern is what a time-dependent mean
-  reversion, or a second factor, would be fitted to.
+  {errs} bp.
+  They change sign along the strip: a pattern, not noise, and what a time-dependent mean reversion or a
+  second factor would be fitted to.
 """
 
 
@@ -824,6 +887,12 @@ def xva(res: Path) -> str:
     big.sort(key=lambda r: order[r["quote"]])
     delta_body = [[r["quote"], f"{float(r['adjoint']):+.4f}", f"{float(r['bump_model_fixed']):+.4f}", f"{float(r['bump_recalibrated']):+.4f}"] for r in big]
     delta_body.append(["**All 37 quotes**", f"**{tot_adj:+.4f}**", f"**{tot_fix:+.4f}**", f"**{tot_rec:+.4f}**"])
+    tf = read(res, "xva_twofactor")
+    tf_body = [[r["model"].capitalize(), f"{float(r['rho']):+.2f}" if r["rho"] else "", f"{float(r['swap_cva_bp']):.2f}", f"{float(r['book_cva_bp']):.2f}", f"{float(r['book_gross_cva_bp']):.1f}", f"{float(r['book_dva_bp']):.2f}"] for r in tf]
+    tf_swap, tf_book, tf_gross = ([float(r[k]) for r in tf] for k in ("swap_cva_bp", "book_cva_bp", "book_gross_cva_bp"))
+    b2 = read(res, "xva_bermudan_2f")
+    b2s = read(res, "xva_bermudan_2f_summary")[0]
+    b2_body = [[f"{float(x['time']):.2f}", f"{float(x['epe_bp']):.1f} ± {float(x['se_bp']):.1f}", f"{float(x['option_epe_bp']):.1f}", f"{float(x['ene_bp']):.1f}", f"{float(y['epe_bp']):.1f}", f"{float(y['option_epe_bp']):.1f}", f"{float(y['ene_bp']):.1f}"] for x, y in zip(b2, ber)]
     time_body = [
         ["One CVA", f"{timing['one CVA']:.2f}", "1×"],
         ["Delta, adjoint", f"{timing['adjoint']:.2f}", f"{timing['adjoint'] / timing['one CVA']:.1f}×"],
@@ -834,8 +903,8 @@ def xva(res: Path) -> str:
     return f"""## 11. XVA: from exposure to price
 
 Section 8 stopped at one swap's uncollateralised exposure profile. This section prices it: a credit curve,
-a netting set, collateral, a Bermudan, and the sensitivities. The model is the one-factor LGM of section 4
-(κ = 3%, calibrated to the 10-year co-terminal strip). All exposures are discounted expectations of
+a netting set, collateral, a Bermudan, the sensitivities, and the same under two factors. Unless stated the
+model is the one-factor LGM of section 4 (κ = 3%, calibrated to the 10-year co-terminal strip). All exposures are discounted expectations of
 deflated values, so CVA is exposure weighted by default probabilities with no further discounting.
 
 ### 11.1 The credit curve
@@ -907,8 +976,9 @@ paths, against {float(ber_sum["pde_price_bp"]):.2f} bp from the PDE of section 5
 - **Before the first exercise date the exposure is the option's price**, {float(ber[0]["epe_bp"]):.0f} bp, far above the
   underlying swap's exposure at the same dates. The option is an asset on every path; the swap is one on
   about half of them.
-- **Exercise replaces option exposure with swap exposure.** By year 5, {float(ber[5]["exercised_pct"]):.0f}% of paths have exercised
-  and {float(ber[5]["swap_epe_bp"]) / float(ber[5]["epe_bp"]):.0%} of the exposure is the swap's. At the last date the two profiles meet: the option is gone.
+- **Exercise replaces option exposure with swap exposure.** By year 5, {float(ber[5]["swap_epe_bp"]) / float(ber[5]["epe_bp"]):.0%} of the exposure is the swap's
+  ({float(ber[5]["exercised_pct"]):.0f}% of paths have exercised; that frequency is under the model's pricing measure, not a real-world
+  probability). At the last date the two profiles meet: the option is gone.
 - **Negative exposure appears only after exercise**, on paths where rates fell after the holder entered
   the swap: {float(ber[-1]["ene_bp"]):.1f} bp at the end, against the swap's own which is several times larger. The
   holder chose when to enter.
@@ -947,9 +1017,40 @@ coefficients: one tape sweep and one transposed solve with the bootstrap Jacobia
   more than the total. The first is the delta of a desk that hedges vega separately; the second folds
   part of the vega into the delta. Neither is wrong, but they are not the same hedge.
 
+### 11.6 Two factors: what the correlation does to exposure
+
+The engine also runs under the two-factor model of section 9. The shape (speeds, σ₂/σ₁) is the one fitted to
+the ATM matrix; the level is bootstrapped to the same 10-year co-terminal strip as the one-factor model, for
+each ρ. So every model below prices the nine swaptions that make up the 10-year swap's exposure identically.
+
+{table(["Model", "ρ", "10Y swap CVA (bp)", "Book CVA, netted (bp)", "Book CVA, no netting (bp)", "Book DVA (bp)"], tf_body, "lrrrrr")}
+
+- **The 10-year swap's CVA does not move** ({min(tf_swap):.1f}–{max(tf_swap):.1f} bp, within simulation error): its exposure on
+  each coupon date is a swaption in the calibration set. This is the two-factor engine's check against a
+  known answer, alongside the test that it reproduces the two-factor swaption strip.
+- **The book's does, modestly:** netted CVA {min(tf_book):.1f}–{max(tf_book):.1f} bp and gross {min(tf_gross):.0f}–{max(tf_gross):.0f} bp across ρ. Swaps of
+  2 to 7 years are not in the calibration set, and how a 2-year receiver offsets a 10-year payer depends
+  on how the two ends of the curve move together.
+- The netted number moves less than the gross one. This book is roughly balanced in each maturity, so most
+  of what the correlation changes nets out. A book that is long one end of the curve and short the other
+  is where it would matter (the engine tests include one: its exposure changes by more than a quarter
+  between ρ = −0.9 and +0.5).
+
+**The Bermudan under two factors.** With two states the continuation value is estimated by regression
+rather than on a grid: an in-the-money fit decides exercise, and a fit on all paths gives the option's value
+where it is out of the money. With the second factor off this reproduces the one-factor grid profile of
+11.4, which is tested.
+
+{table(["Years", "EPE, two factors (bp)", "of which option", "ENE (bp)", "EPE, one factor (bp)", "of which option", "ENE (bp)"], b2_body, "rrrrrrr")}
+
+Under the fitted two-factor model the Bermudan is worth {float(b2s["price_bp"]):.1f} ± {float(b2s["price_se_bp"]):.1f} bp (section 9.3) and its CVA is
+{float(b2s["cva_bp"]):.1f} bp, against {float(ber_sum["cva_bp"]):.1f} bp in the one-factor model at κ = 3%. The exposure is lower at the start, where it is
+the option's price, and the same at the end, where it is the remaining swap's and both models reprice the
+same swaptions.
+
 Not modelled: wrong-way risk (default and exposure are independent), initial margin, bilateral survival
-weighting, more than one currency, a second factor in the exposure engine. The engine values a floating
-coupon in progress at the term rate fixed at its period start.
+weighting, more than one currency. The engine values a floating coupon in progress at the term rate fixed
+at its period start.
 """
 
 
