@@ -36,11 +36,12 @@ The PDE lies within two standard errors of both Monte Carlo bounds on every trad
 | G2++ calibration | Fitted to 30 ATM swaptions: 0.12 bp RMS against 1.72 bp for one factor. Three of four starts recover the shape the vol screen was generated with (ρ −0.72 against −0.70). |
 | CMS spread option | 10Y − 2Y, 5-year expiry, both swaption vols matched: 10 bp under one factor (intrinsic), 35 to 70 bp under two as ρ goes from −0.75 to −0.97. The two vols alone rule out ρ above about −0.7. |
 | Mean reversion | Marked to a second strip of swaptions: −0.05% or −0.71% depending on its tenor, 3.2 bp apart on the Bermudan, against an 81 bp range unmarked. |
-| CVA of a swap | Closed form (a strip of swaptions) 30.62 bp; the Monte Carlo exposure engine 30.53 bp. |
+| CVA of a swap | Closed form (a strip of swaptions) 30.62 bp; the Monte Carlo exposure engine 30.53 bp. On a quarterly grid it is 34.7 bp: a grid of coupon dates samples the exposure at its lowest points. |
 | Netting and collateral | CVA of an eight-swap book: 97.5 bp with no netting, 15.2 bp netted, 0.88 bp with a zero-threshold CSA. What is left is the margin period of risk and the coupon dates. |
 | Bermudan exposure | Exposure starts at the option's price and turns into swap exposure as paths exercise. CVA 38.5 bp against 30.6 bp for the underlying swap; DVA 0.6 bp against 15.1 bp. |
 | CVA risk by adjoint | Delta of a swap's CVA to all 37 curve quotes in 2 ms: **about 140× faster** than bumping, exact to 2e-10. |
 | Two-factor exposure | The 10-year swap's CVA is the same under every factor correlation (30.5–30.8 bp: its swaptions are the calibration set); the book's netted CVA moves 15.0–15.6 bp and its gross CVA 91–103 bp. |
+| Wrong-way risk | Hazard rate tied to the rates state, CDS curve still repriced: a 10-year payer's CVA goes from 34.7 bp to 57.5 bp when a one-s.d. rise in rates multiplies the hazard by 1.65, and the receiver's falls from 32.4 to 17.4 bp. |
 
 ![Bermudan behaviour](docs/img/bermudan_behaviour.png)
 
@@ -94,14 +95,15 @@ cpp/models       LGM one-factor and G2++ two-factor, swaption pricing under them
 cpp/pricers      Bermudan by PDE / LSMC / Andersen–Broadie, Bermudan and CMS spread under G2++,
                  exposure, risk ladders
 cpp/xva          credit curve from CDS, exposure engine (netting, collateral), CVA / DVA / FVA,
-                 Bermudan exposure, CVA sensitivities
+                 Bermudan exposure, CVA sensitivities, wrong-way risk
 cpp/examples     rl_analysis (every number in docs/RESULTS.md) and small demos
 tools            results generator, data generators
-notebooks        seven walk-throughs of the curve and vol layers
+notebooks        ten walk-throughs: dates, curves, vol, two factors and the spread option, exposure and
+                 collateral, Bermudan exposure with CVA risk and wrong-way risk
 docs             RESULTS.md, DESIGN.md
 ```
 
-Each `cpp/` module depends only on the ones above it. About 400 C++ test cases and 59 Python tests; the
+Each `cpp/` module depends only on the ones above it. About 400 C++ test cases and 61 Python tests; the
 C++ suite also runs under AddressSanitizer and UBSan.
 
 ## Build and run
@@ -150,8 +152,9 @@ uv run python tools/make_results.py
 - **Single-curve in the model.** The LGM pricers handle SOFR swaps under SOFR discounting; the two-day
   payment lag is frozen at today's curve.
 - **Bermudan risk is by bump and re-calibration**, not adjoint. AAD covers the curve layer.
-- **XVA is single-currency, swaps and one Bermudan.** No wrong-way risk (default and exposure are
-  independent), no initial margin, unilateral CVA and DVA. The credit spreads are illustrative. The
+- **XVA is single-currency, swaps and one Bermudan.** Wrong-way risk is a stated dependence of the hazard
+  rate on rates, deterministic and one-factor, not an estimated one. No initial margin, unilateral CVA
+  and DVA. The credit spreads are illustrative. The
   engine values a floating coupon in progress at the term rate fixed at its period start, which is exact
   on coupon dates. The adjoint CVA delta covers one swap under one factor, not the netting set. The
   two-factor Bermudan exposure is regression-based.

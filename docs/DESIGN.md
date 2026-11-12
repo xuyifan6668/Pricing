@@ -105,6 +105,14 @@ calibration recovers its parameters to within the difference between the two for
 generating the screen with the library's own pricer, which would make the recovery exact and the test
 circular.
 
+**Wrong-way risk keeps the credit curve fixed and says which measure that is in.** The hazard rate is a
+function of the rates state, and its level is re-solved on every interval so that survival probabilities
+are unchanged. Paths are simulated under the pricing model's numeraire while a survival probability to t
+belongs to the t-forward measure, so the condition carries the deflated bond as a weight; without it the
+"unchanged" curve would be a different curve as soon as the dependence is switched on. *Rejected:* a
+second stochastic factor for credit: it needs a correlation nobody can calibrate here, and the question
+the section answers (how much does CVA move for a stated dependence) does not need it.
+
 ## What was deliberately left out
 
 Python bindings, an Excel add-in, a parallel risk engine, a generic product/model registry, payoff

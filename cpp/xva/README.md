@@ -9,6 +9,7 @@ Counterparty credit and funding adjustments on top of the pricing models.
 | CVA, DVA, FCA, FBA from exposure; one swap's exposure in closed form | `xva.hpp` |
 | Exposure of a Bermudan swaption: an option until exercised, a swap afterwards; one- and two-factor | `bermudan_exposure.hpp` |
 | CS01 ladder; adjoint delta of a swap's CVA to the curve quotes | `cva_risk.hpp` |
+| Wrong-way risk: a hazard rate that depends on the rates state, CDS curve still repriced | `wrong_way.hpp` |
 
 Everything is in deflated units, as in the pricers: the expectation of a deflated value is its price today,
 so expected exposure is already discounted and CVA is exposure weighted by default probabilities.
@@ -20,6 +21,8 @@ so expected exposure is already discounted and CVA is exposure weighted by defau
   margin period. Collateralised exposure spikes on coupon dates.
 - Bermudan: CVA 38.5 bp against 30.6 bp for the underlying swap; DVA 0.6 bp against 15.1 bp.
 - CVA delta to 37 curve quotes by adjoint in 2 ms, about 140 times faster than bumping.
+- Wrong-way risk: a 10-year payer's CVA is 34.7 bp independent and 57.5 bp when a one-s.d. rise in rates
+  multiplies the hazard by 1.65; the receiver's falls from 32.4 to 17.4 bp.
 - Under two factors the calibrated 10-year swap's CVA does not move with factor correlation; the book's
   netted CVA moves 15.0–15.6 bp and its gross CVA 91–103 bp.
 
@@ -36,3 +39,5 @@ money is the swap's closed form. Adjoint CVA delta = central bump to 2e-10; the 
 parallel shift. Two factors: the engine reproduces the two-factor swaption strip on coupon dates; with the
 second factor off it is the one-factor engine; factor correlation moves a curve-slope position and not the
 calibrated swap; the regression-based Bermudan profile matches the one-factor grid with the second factor off.
+Wrong-way risk: no dependence is the independent CVA exactly; the CDS curve is repriced for any dependence;
+credit that worsens with rates raises the payer's CVA and lowers the receiver's.
