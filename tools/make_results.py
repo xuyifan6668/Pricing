@@ -887,6 +887,31 @@ def xva(res: Path) -> str:
     big.sort(key=lambda r: order[r["quote"]])
     delta_body = [[r["quote"], f"{float(r['adjoint']):+.4f}", f"{float(r['bump_model_fixed']):+.4f}", f"{float(r['bump_recalibrated']):+.4f}"] for r in big]
     delta_body.append(["**All 37 quotes**", f"**{tot_adj:+.4f}**", f"**{tot_fix:+.4f}**", f"**{tot_rec:+.4f}**"])
+    wwr = read(res, "xva_wwr")
+    prof = read(res, "xva_wwr_profile")
+
+    def w(beta: float, key: str) -> float:
+        return next(float(r[key]) for r in wwr if abs(float(r["beta"]) - beta) < 1e-9)
+
+    wwr_body = [[f"{float(r['beta']):+.2f}", f"{float(r['hazard_multiple_per_sd']):.2f}×", f"{float(r['payer_cva_bp']):.1f} ± {float(r['payer_se_bp']):.1f}", f"{float(r['receiver_cva_bp']):.1f} ± {float(r['receiver_se_bp']):.1f}", f"{float(r['book_cva_bp']):.1f} ± {float(r['book_se_bp']):.1f}"] for r in wwr]
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(9.4, 3.3))
+    betas = col(wwr, "beta")
+    a1.plot(betas, col(wwr, "payer_cva_bp"), "o-", color=ORANGE, label="10Y payer")
+    a1.plot(betas, col(wwr, "receiver_cva_bp"), "o-", color=BLUE, label="10Y receiver")
+    a1.plot(betas, col(wwr, "book_cva_bp"), "o-", color=AQUA, label="eight-swap book")
+    a1.set_title("CVA against the dependence of default on rates")
+    a1.set_xlabel("β: log of the hazard multiple per 1 s.d. rise in rates")
+    a1.set_ylabel("bp of notional")
+    a1.legend()
+    tp = col(prof, "time")
+    a2.plot(tp, col(prof, "epe_given_default_wrong_way_bp"), color=ORANGE, label="given default, β = +1")
+    a2.plot(tp, col(prof, "epe_bp"), color=MUTED, linestyle="--", label="unconditional")
+    a2.plot(tp, col(prof, "epe_given_default_right_way_bp"), color=BLUE, label="given default, β = −1")
+    a2.set_title("Payer's expected exposure")
+    a2.set_xlabel("years")
+    a2.legend()
+    plot_wwr = save(fig, "xva_wwr.png")
+
     tf = read(res, "xva_twofactor")
     tf_body = [[r["model"].capitalize(), f"{float(r['rho']):+.2f}" if r["rho"] else "", f"{float(r['swap_cva_bp']):.2f}", f"{float(r['book_cva_bp']):.2f}", f"{float(r['book_gross_cva_bp']):.1f}", f"{float(r['book_dva_bp']):.2f}"] for r in tf]
     tf_swap, tf_book, tf_gross = ([float(r[k]) for r in tf] for k in ("swap_cva_bp", "book_cva_bp", "book_gross_cva_bp"))
@@ -903,7 +928,7 @@ def xva(res: Path) -> str:
     return f"""## 11. XVA: from exposure to price
 
 Section 8 stopped at one swap's uncollateralised exposure profile. This section prices it: a credit curve,
-a netting set, collateral, a Bermudan, the sensitivities, and the same under two factors. Unless stated the
+a netting set, collateral, a Bermudan, the sensitivities, the same under two factors, and wrong-way risk. Unless stated the
 model is the one-factor LGM of section 4 (κ = 3%, calibrated to the 10-year co-terminal strip). All exposures are discounted expectations of
 deflated values, so CVA is exposure weighted by default probabilities with no further discounting.
 
@@ -1048,9 +1073,36 @@ Under the fitted two-factor model the Bermudan is worth {float(b2s["price_bp"]):
 the option's price, and the same at the end, where it is the remaining swap's and both models reprice the
 same swaptions.
 
-Not modelled: wrong-way risk (default and exposure are independent), initial margin, bilateral survival
-weighting, more than one currency. The engine values a floating coupon in progress at the term rate fixed
-at its period start.
+### 11.7 Wrong-way risk: when default depends on rates
+
+Everything above multiplies expected exposure by default probability, which assumes the two are
+independent. Here the counterparty's hazard rate on each interval is a function of the rates state at the
+end of it: a one-standard-deviation rise in rates multiplies the hazard by e^β. β > 0 is a counterparty
+whose credit worsens as rates rise. The level of the hazard is re-solved on every interval so that the CDS
+curve is still repriced (to {max(float(r["worst_survival_error"]) for r in wwr):.0e} here), so only the dependence changes, not the amount of default risk.
+
+{table(["β", "Hazard multiple per 1 s.d. of rates", "10Y payer CVA (bp)", "10Y receiver CVA (bp)", "Book CVA (bp)"], wwr_body, "rrrrr")}
+
+{plot_wwr}
+
+- **The effect is large and has a sign.** At β = +0.5 the payer's CVA is {w(0.5, "payer_cva_bp") / w(0, "payer_cva_bp"):.2f}× the independent number and the
+  receiver's {w(0.5, "receiver_cva_bp") / w(0, "receiver_cva_bp"):.2f}×. The payer is owed money when rates are high, which is when this counterparty defaults:
+  wrong-way risk. The receiver faces the same counterparty with right-way risk. A single multiplier on
+  CVA cannot capture this; it depends on which way the trade faces.
+- **What changes is the exposure conditional on default** (right panel). For the payer at β = +1 it is
+  {float(prof[len(prof) // 2]["epe_given_default_wrong_way_bp"]) / float(prof[len(prof) // 2]["epe_bp"]):.1f}× the unconditional exposure at year {float(prof[len(prof) // 2]["time"]):.0f}. Dependence of this kind is one of the things the regulatory
+  alpha multiplier of 1.4 is there to cover.
+- **The book's CVA moves the same way as the payer's** ({w(-1, "book_cva_bp"):.1f} to {w(1, "book_cva_bp"):.1f} bp): netted, it is long rates.
+- **The independent number here is {w(0, "payer_cva_bp"):.1f} bp, not the {float(swp_sum[0]["cva_bp"]):.1f} bp of 11.2.** The trade is the same; the exposure dates are
+  quarterly here and coupon dates there. Exposure drops each time a coupon rolls off, so a grid of coupon
+  dates samples the profile at its lowest points. On this swap that understates CVA by {1 - float(swp_sum[0]["cva_bp"]) / w(0, "payer_cva_bp"):.0%}. The closed form is
+  the right check of the engine; it is not the right grid for a CVA.
+
+β is an input here, not an estimate, the link is deterministic (one factor drives both rates and credit),
+and default does not itself move rates. The section measures how much CVA moves for a stated dependence.
+
+Not modelled: initial margin, bilateral survival weighting, more than one currency. The engine values a
+floating coupon in progress at the term rate fixed at its period start.
 """
 
 

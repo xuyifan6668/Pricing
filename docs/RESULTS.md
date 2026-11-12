@@ -558,7 +558,7 @@ re-bootstrapping ζ to the co-terminal strip at every trial value.
 ## 11. XVA: from exposure to price
 
 Section 8 stopped at one swap's uncollateralised exposure profile. This section prices it: a credit curve,
-a netting set, collateral, a Bermudan, the sensitivities, and the same under two factors. Unless stated the
+a netting set, collateral, a Bermudan, the sensitivities, the same under two factors, and wrong-way risk. Unless stated the
 model is the one-factor LGM of section 4 (κ = 3%, calibrated to the 10-year co-terminal strip). All exposures are discounted expectations of
 deflated values, so CVA is exposure weighted by default probabilities with no further discounting.
 
@@ -622,7 +622,7 @@ Eight swaps with one counterparty (values today in bp of a unit notional; the bo
 | 8 | 5Y | 3.55 | receive fixed | 0.9 | +103.3 |
 
 Exposure is simulated on 51 dates (quarterly, plus every coupon date) with 50,000 paths; one run takes
-1.8 s.
+1.9 s.
 
 ![xva_book.png](img/xva_book.png)
 
@@ -723,15 +723,15 @@ coefficients: one tape sweep and one transposed solve with the bootstrap Jacobia
 
 |  | Time (ms) | Relative |
 | --- | ---: | ---: |
-| One CVA | 1.35 | 1× |
-| Delta, adjoint | 2.28 | 1.7× |
-| Delta, bump with the model fixed | 323 | 239× |
-| Delta, bump and re-calibrate | 893 | 662× |
+| One CVA | 1.21 | 1× |
+| Delta, adjoint | 1.89 | 1.6× |
+| Delta, bump with the model fixed | 256 | 211× |
+| Delta, bump and re-calibrate | 819 | 677× |
 
 - The adjoint ladder is the exact derivative: the tests match it to a small central bump to 2e-10. The
   bumps in the table are one-sided 1 bp shifts and differ from it by their convexity, at most 4e-03 bp per bp.
-- The adjoint costs the time of 1.7 CVA evaluations. Bumping needs 37 curve rebuilds and revaluations:
-  **about 142× slower**.
+- The adjoint costs the time of 1.6 CVA evaluations. Bumping needs 37 curve rebuilds and revaluations:
+  **about 135× slower**.
 - **Which delta is a choice.** Bumping with the model's variance held fixed gives +0.231 bp per bp in total;
   re-calibrating to the same normal vols after each bump gives +0.220, 5% less, and the buckets move by
   more than the total. The first is the delta of a desk that hedges vega separately; the second folds
@@ -786,6 +786,41 @@ Under the fitted two-factor model the Bermudan is worth 435.7 ± 0.8 bp (section
 the option's price, and the same at the end, where it is the remaining swap's and both models reprice the
 same swaptions.
 
-Not modelled: wrong-way risk (default and exposure are independent), initial margin, bilateral survival
-weighting, more than one currency. The engine values a floating coupon in progress at the term rate fixed
-at its period start.
+### 11.7 Wrong-way risk: when default depends on rates
+
+Everything above multiplies expected exposure by default probability, which assumes the two are
+independent. Here the counterparty's hazard rate on each interval is a function of the rates state at the
+end of it: a one-standard-deviation rise in rates multiplies the hazard by e^β. β > 0 is a counterparty
+whose credit worsens as rates rise. The level of the hazard is re-solved on every interval so that the CDS
+curve is still repriced (to 1e-15 here), so only the dependence changes, not the amount of default risk.
+
+| β | Hazard multiple per 1 s.d. of rates | 10Y payer CVA (bp) | 10Y receiver CVA (bp) | Book CVA (bp) |
+| ---: | ---: | ---: | ---: | ---: |
+| -1.00 | 0.37× | 8.9 ± 0.0 | 75.3 ± 0.7 | 5.7 ± 0.0 |
+| -0.50 | 0.61× | 18.5 ± 0.1 | 53.0 ± 0.4 | 9.5 ± 0.0 |
+| -0.25 | 0.78× | 25.7 ± 0.1 | 42.2 ± 0.3 | 12.1 ± 0.0 |
+| +0.00 | 1.00× | 34.7 ± 0.2 | 32.4 ± 0.2 | 15.1 ± 0.0 |
+| +0.25 | 1.28× | 45.4 ± 0.2 | 24.1 ± 0.1 | 18.5 ± 0.1 |
+| +0.50 | 1.65× | 57.5 ± 0.3 | 17.4 ± 0.1 | 22.2 ± 0.1 |
+| +1.00 | 2.72× | 82.5 ± 0.6 | 8.3 ± 0.0 | 29.3 ± 0.2 |
+
+![xva_wwr.png](img/xva_wwr.png)
+
+- **The effect is large and has a sign.** At β = +0.5 the payer's CVA is 1.65× the independent number and the
+  receiver's 0.54×. The payer is owed money when rates are high, which is when this counterparty defaults:
+  wrong-way risk. The receiver faces the same counterparty with right-way risk. A single multiplier on
+  CVA cannot capture this; it depends on which way the trade faces.
+- **What changes is the exposure conditional on default** (right panel). For the payer at β = +1 it is
+  2.0× the unconditional exposure at year 5. Dependence of this kind is one of the things the regulatory
+  alpha multiplier of 1.4 is there to cover.
+- **The book's CVA moves the same way as the payer's** (5.7 to 29.3 bp): netted, it is long rates.
+- **The independent number here is 34.7 bp, not the 30.6 bp of 11.2.** The trade is the same; the exposure dates are
+  quarterly here and coupon dates there. Exposure drops each time a coupon rolls off, so a grid of coupon
+  dates samples the profile at its lowest points. On this swap that understates CVA by 12%. The closed form is
+  the right check of the engine; it is not the right grid for a CVA.
+
+β is an input here, not an estimate, the link is deterministic (one factor drives both rates and credit),
+and default does not itself move rates. The section measures how much CVA moves for a stated dependence.
+
+Not modelled: initial margin, bilateral survival weighting, more than one currency. The engine values a
+floating coupon in progress at the term rate fixed at its period start.

@@ -28,6 +28,7 @@
 #include "rl/xva/credit.hpp"
 #include "rl/xva/cva_risk.hpp"
 #include "rl/xva/exposure_engine.hpp"
+#include "rl/xva/wrong_way.hpp"
 #include "rl/xva/xva.hpp"
 #include "rl/vol/sabr.hpp"
 
@@ -482,8 +483,8 @@ void twoFactor(const std::filesystem::path& out, const models::UsdMarket& m) {
             }
         }
         report2("fitted to the ATM matrix", fit2.model);
-        Csv t(out, "cms_spread_info.csv", "curve_spread_bp,short_forward_pct,long_forward_pct,short_vol_bp,long_vol_bp,ms_per_price");
-        std::fprintf(t.f, "%.3f,%.4f,%.4f,%.3f,%.3f,%.2f\n", curveSpread * kBp, shortSwap.forwardRate() * 100.0, longSwap.forwardRate() * 100.0, pair[0].marketVol * kBp,
+        Csv t(out, "cms_spread_info.csv", "expiry_years,df_expiry,curve_spread_bp,short_forward_pct,long_forward_pct,short_vol_bp,long_vol_bp,ms_per_price");
+        std::fprintf(t.f, "%.4f,%.8f,%.3f,%.4f,%.4f,%.3f,%.3f,%.2f\n", longSwap.time, df, curveSpread * kBp, shortSwap.forwardRate() * 100.0, longSwap.forwardRate() * 100.0, pair[0].marketVol * kBp,
                      pair[1].marketVol * kBp, timeMs([&] { (void)pricers::priceCmsSpread(fit2.model, longSwap, shortSwap, curveSpread, true, df); }));
     }
 }
@@ -693,6 +694,32 @@ void xvaSection(const std::filesystem::path& out, const models::UsdMarket& m) {
         std::fprintf(t.f, "adjoint,%.4f\n", timeMs([&] { (void)xva::swapCvaDeltaAdjoint(m, model, ref, hazard, recovery); }));
         std::fprintf(t.f, "bump (model fixed),%.4f\n", timeMs([&] { (void)pricers::parDeltaBump(m, frozen); }));
         std::fprintf(t.f, "bump (recalibrated),%.4f\n", timeMs([&] { (void)pricers::parDeltaBump(m, recalibrated); }));
+    }
+
+    // --- Wrong-way risk: default that depends on rates ---------------------------------------------------
+    {
+        xva::ExposureOptions wo;
+        wo.paths = 50000;
+        wo.keepPaths = true;
+        const instruments::Swap payer = swap(m, 10, 0.035, true), receiver = swap(m, 10, 0.035, false);
+        const std::vector<double> swapTimes = xva::exposureTimes({payer}, m.curves, 0.25);
+        const xva::ExposureProfile pp = xva::simulateExposure(model, {payer}, m.curves, swapTimes, std::nullopt, wo);
+        const xva::ExposureProfile pr = xva::simulateExposure(model, {receiver}, m.curves, swapTimes, std::nullopt, wo);
+        const xva::ExposureProfile pb = xva::simulateExposure(model, trades, m.curves, times, std::nullopt, wo);
+        Csv c(out, "xva_wwr.csv", "beta,hazard_multiple_per_sd,payer_cva_bp,payer_se_bp,receiver_cva_bp,receiver_se_bp,book_cva_bp,book_se_bp,worst_survival_error");
+        for (double beta : {-1.0, -0.5, -0.25, 0.0, 0.25, 0.5, 1.0}) {
+            const xva::WrongWayResult a = xva::wrongWayCva(pp, model, in.counterparty, recovery, beta), b = xva::wrongWayCva(pr, model, in.counterparty, recovery, beta),
+                                      d = xva::wrongWayCva(pb, model, in.counterparty, recovery, beta);
+            double worst = 0.0;
+            for (const auto* r : {&a, &b, &d})
+                for (double e : r->survivalError) worst = std::max(worst, std::fabs(e));
+            std::fprintf(c.f, "%.2f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.1e\n", beta, std::exp(beta), a.cva * kBp, a.standardError * kBp, b.cva * kBp, b.standardError * kBp,
+                         d.cva * kBp, d.standardError * kBp, worst);
+        }
+        const xva::WrongWayResult up = xva::wrongWayCva(pp, model, in.counterparty, recovery, 1.0), down = xva::wrongWayCva(pp, model, in.counterparty, recovery, -1.0);
+        Csv p(out, "xva_wwr_profile.csv", "time,epe_bp,epe_given_default_wrong_way_bp,epe_given_default_right_way_bp");
+        for (std::size_t i = 1; i < up.times.size(); ++i)
+            std::fprintf(p.f, "%.4f,%.3f,%.3f,%.3f\n", up.times[i], up.epe[i] * kBp, up.epeGivenDefault[i] * kBp, down.epeGivenDefault[i] * kBp);
     }
 
     // --- Two factors: the same book and the same Bermudan when rates can decorrelate --------------------
