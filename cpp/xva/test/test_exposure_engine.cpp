@@ -3,6 +3,9 @@
 #include "rl/xva/exposure_engine.hpp"
 
 #include "rl/core/error.hpp"
+#include "rl/models/g2pp_calibration.hpp"
+#include "rl/models/g2pp_swaption.hpp"
+#include "rl/models/lgm_calibration.hpp"
 #include "rl/xva/xva.hpp"
 #include "test_support.hpp"
 
@@ -142,4 +145,75 @@ TEST_CASE("Engine rejects inputs it cannot value", "[xva][engine]") {
     CHECK_THROWS_AS(simulateExposure(model(), {swap}, curves(), {0.0, 1.0}, Csa{-1.0, 0.0, 0.04}), rl::InputError);
     const instruments::Swap ff = instruments::OisSwapBuilder::usdFedFunds(usdMarket().asOf).id("ff").tenor(core::Tenor::years(5)).fixedRate(0.035).build();
     CHECK_THROWS_AS(simulateExposure(model(), {ff}, curves(), {0.0, 1.0}), rl::InputError);
+}
+
+namespace {
+/// A two-factor shape with its volatility scale calibrated to the 10-year co-terminal strip at 3.50%.
+models::G2pp twoFactor(double rho, double sigma2 = 0.009, double kappa1 = 0.40) {
+    const instruments::Swap swap = spotSwap(10, 0.035);
+    std::vector<models::ExerciseRight> rights;
+    for (core::Date d : models::coterminalExerciseDates(swap, 1.0, 0, "USD-SIFMA")) rights.push_back(models::makeExerciseRight(swap, curves(), d));
+    return models::calibrateG2ppToStrip(models::G2pp(kappa1, 0.03, 0.012, sigma2, rho), models::makeStrip(rights, usdMarket().cube)).model;
+}
+} // namespace
+
+TEST_CASE("Two-factor engine reproduces the two-factor swaption strip on coupon dates", "[xva][engine][g2pp]") {
+    const models::G2pp g = twoFactor(-0.7);
+    for (bool payer : {true, false}) {
+        const instruments::Swap swap = spotSwap(7, 0.034, payer);
+        const std::vector<double> times = periodStartTimes(swap, curves());
+        const ExposureProfile mc = simulateExposure(g, {swap}, curves(), times, std::nullopt, {.paths = 40000});
+        std::size_t i = 1;
+        double last = 0.0;
+        for (const auto& cf : swap.fixedLeg().cashflows()) {
+            const core::Date start = std::get<instruments::FixedCoupon>(cf).accrualStart;
+            const double t = curves().discount().time(start);
+            if (t <= last + 1e-9) continue;
+            last = t;
+            const std::vector<models::BondFlow> flows = models::swapAsBonds(swap, curves(), start);
+            double forward = 0.0;
+            for (const auto& f : flows) forward += f.amount * f.df;
+            const double exact = models::g2ppOptionValue(g, t, flows);
+            CHECK_THAT(mc.epe[i], WithinAbs(exact, 4.0 * mc.epeStandardError[i]));
+            CHECK_THAT(mc.epe[i] + mc.ene[i], WithinAbs(forward, 5.0 * mc.epeStandardError[i])); // deflated values are martingales
+            ++i;
+        }
+        CHECK(i == times.size());
+    }
+}
+
+TEST_CASE("Two-factor engine with the second factor off is the one-factor engine", "[xva][engine][g2pp]") {
+    const instruments::Swap swap = spotSwap(10, 0.035);
+    const SwapExposure exact = swapExposureClosedForm(model(), swap, curves());
+    // Same mean reversion as the one-factor reference and no second factor: the same model.
+    const ExposureProfile mc = simulateExposure(twoFactor(0.0, 0.0, 0.03), {swap}, curves(), exact.times, std::nullopt, {.paths = 40000});
+    for (std::size_t i = 1; i < exact.times.size(); ++i) CHECK_THAT(mc.epe[i], WithinAbs(exact.epe[i], 4.0 * mc.epeStandardError[i]));
+}
+
+TEST_CASE("Factor correlation changes how trades of different maturities net, not the calibrated swap", "[xva][engine][g2pp]") {
+    const instruments::Swap ten = spotSwap(10, 0.035);
+    const std::vector<double> couponDates = periodStartTimes(ten, curves()), midDates = midPeriodTimes(10);
+    const std::vector<instruments::Swap> steepener{spotSwap(10, 0.035, true, 1.0), spotSwap(2, 0.035, false, 4.5)}; // long-end payer against a short-end receiver
+    std::vector<double> tenLow, tenHigh;
+    double bookLow = 0.0, bookHigh = 0.0;
+    for (double rho : {-0.9, 0.5}) {
+        const models::G2pp g = twoFactor(rho);
+        const ExposureProfile a = simulateExposure(g, {ten}, curves(), couponDates, std::nullopt, {.paths = 40000}), b = simulateExposure(g, steepener, curves(), midDates);
+        (rho < 0.0 ? tenLow : tenHigh) = a.epe;
+        (rho < 0.0 ? bookLow : bookHigh) = b.epe[1];
+        for (std::size_t i = 1; i < midDates.size(); ++i) CHECK(b.epe[i] <= b.grossEpe[i] + 1e-13);
+    }
+    // The 10-year swap's exposure on its coupon dates IS the calibration set, so it does not move ...
+    for (std::size_t i = 2; i < couponDates.size(); ++i) CHECK_THAT(tenLow[i], WithinAbs(tenHigh[i], 0.02 * tenHigh[i]));
+    // ... while a position in the slope of the curve is exposed to exactly what the correlation controls.
+    CHECK(bookLow > 1.25 * bookHigh);
+}
+
+TEST_CASE("Two-factor engine with collateral: residual exposure is positive and small", "[xva][engine][g2pp]") {
+    const std::vector<double> times = midPeriodTimes(10);
+    const ExposureProfile p = simulateExposure(twoFactor(-0.7), {spotSwap(10, 0.035)}, curves(), times, Csa{0.0, 0.0, 10.0 / 252.0});
+    for (std::size_t i = 1; i < times.size(); ++i) {
+        CHECK(p.collateralisedEpe[i] > 0.0);
+        CHECK(p.collateralisedEpe[i] < 0.5 * p.epe[i]);
+    }
 }

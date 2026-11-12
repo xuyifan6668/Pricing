@@ -41,10 +41,11 @@
 //   * A coupon leaves the valuation at its accrual end, not on its payment date two days later.
 //   * Collateral is cash in the deflated unit: its deflated value is held constant over the margin
 //     period. Threshold and minimum transfer amount are symmetric. No initial margin, no haircuts.
-//   * One-factor model, single currency, swaps only.
+//   * Single currency, swaps only.
 
 #include "rl/instruments/swap.hpp"
 #include "rl/market/curve_set.hpp"
+#include "rl/models/g2pp.hpp"
 #include "rl/models/lgm.hpp"
 
 #include <cstddef>
@@ -90,6 +91,12 @@ std::vector<double> periodStartTimes(const instruments::Swap& swap, const market
 /// Simulate. `times` must start at 0 and be strictly increasing. Every swap must be an overnight
 /// swap projected off the discount curve with no spread. Throws InputError otherwise.
 ExposureProfile simulateExposure(const models::Lgm1F& model, const std::vector<instruments::Swap>& trades, const market::CurveSet<double>& curves,
+                                 const std::vector<double>& times, const std::optional<Csa>& csa = std::nullopt, const ExposureOptions& options = {});
+
+/// The same under the two-factor model. With two factors the trades of a netting set no longer move
+/// together: swaps of different maturities load differently on the fast and the slow factor, so how
+/// much they offset depends on the factor correlation, which no single-maturity swaption strip sees.
+ExposureProfile simulateExposure(const models::G2pp& model, const std::vector<instruments::Swap>& trades, const market::CurveSet<double>& curves,
                                  const std::vector<double>& times, const std::optional<Csa>& csa = std::nullopt, const ExposureOptions& options = {});
 
 } // namespace rl::xva

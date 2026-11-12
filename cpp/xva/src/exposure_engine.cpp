@@ -2,9 +2,11 @@
 
 #include "rl/core/error.hpp"
 #include "rl/math/rng.hpp"
+#include "rl/models/g2pp.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <variant>
 
 namespace rl::xva {
@@ -16,14 +18,31 @@ using instruments::OvernightCoupon;
 
 const double kEps = 1e-9; // time comparisons: a millisecond of a year
 
+// The engine is written once for a two-dimensional driftless Gaussian state. A deflated bond maturing
+// at T is D(T) exp(−L(T)·x − ½ L(T)ᵀ C(t) L(T)); the one-factor model is the case where the second
+// loading and the second state are identically zero.
+struct Load {
+    double h1 = 0.0, h2 = 0.0;
+};
+struct Cov {
+    double c11 = 0.0, c12 = 0.0, c22 = 0.0;
+};
+double quad(const Load& l, const Cov& c) noexcept { return l.h1 * l.h1 * c.c11 + 2.0 * l.h1 * l.h2 * c.c12 + l.h2 * l.h2 * c.c22; }
+
+struct Dynamics {
+    bool twoFactor = false;
+    std::function<Load(double)> loading;   ///< L(T)
+    std::function<Cov(double)> covariance; ///< C(t)
+};
+
 struct FixedItem {
     double end = 0.0;   ///< accrual end: the coupon is in the valuation until then
-    double h = 0.0;     ///< H(payment)
+    Load h;             ///< L(payment)
     double c = 0.0;     ///< sign · N · K · τ · D(payment)
 };
 struct FloatItem {
     double start = 0.0, end = 0.0;
-    double hs = 0.0, he = 0.0;
+    Load hs, he;
     double ds = 0.0, de = 0.0; ///< D(start), D(end)
     double n = 0.0;            ///< sign · N · D(payment)/D(end): notional with the payment delay folded in
     std::size_t id = 0;        ///< index into the per-path array of fixed rates
@@ -33,14 +52,14 @@ struct Trade {
     std::vector<FloatItem> floating;
 };
 
-Trade compile(const models::Lgm1F& model, const instruments::Swap& swap, const market::CurveSet<double>& curves, std::size_t& nextId) {
+Trade compile(const Dynamics& model, const instruments::Swap& swap, const market::CurveSet<double>& curves, std::size_t& nextId) {
     const market::YieldCurve<double>& disc = curves.discount();
     Trade t;
     for (const auto& cf : swap.fixedLeg().cashflows()) {
         const auto* c = std::get_if<FixedCoupon>(&cf);
         RL_REQUIRE(c != nullptr, "simulateExposure: the fixed leg of " + swap.id() + " must hold fixed coupons only");
         const double pay = disc.time(c->payment);
-        t.fixed.push_back({disc.time(c->accrualEnd), model.H(pay), swap.fixedLeg().sign() * c->notional * c->rate * c->tau * disc.df(pay)});
+        t.fixed.push_back({disc.time(c->accrualEnd), model.loading(pay), swap.fixedLeg().sign() * c->notional * c->rate * c->tau * disc.df(pay)});
     }
     for (const auto& cf : swap.floatLeg().cashflows()) {
         const auto* c = std::get_if<OvernightCoupon>(&cf);
@@ -50,8 +69,8 @@ Trade compile(const models::Lgm1F& model, const instruments::Swap& swap, const m
         FloatItem f;
         f.start = disc.time(c->accrualStart);
         f.end = disc.time(c->accrualEnd);
-        f.hs = model.H(std::max(f.start, 0.0));
-        f.he = model.H(f.end);
+        f.hs = model.loading(std::max(f.start, 0.0));
+        f.he = model.loading(f.end);
         f.ds = disc.df(std::max(f.start, 0.0));
         f.de = disc.df(f.end);
         f.n = swap.floatLeg().sign() * c->notional * disc.df(c->payment) / f.de;
@@ -64,10 +83,10 @@ Trade compile(const models::Lgm1F& model, const instruments::Swap& swap, const m
 /// What a trade is worth at one valuation date, as a function of the state: bonds still to come,
 /// plus the floating coupons whose rate was fixed earlier on the path.
 struct Term {
-    double h, c;
+    double h1, h2, c;
 };
 struct InProgress {
-    double h, c;
+    double h1, h2, c;
     std::size_t id;
 };
 struct Valuation {
@@ -75,12 +94,12 @@ struct Valuation {
     std::vector<std::vector<InProgress>> fixedRates; // per trade
 };
 
-Valuation valuationAt(const std::vector<Trade>& trades, double t, double zeta) {
+Valuation valuationAt(const std::vector<Trade>& trades, double t, const Cov& cov) {
     Valuation v;
     for (const Trade& tr : trades) {
         std::vector<Term> terms;
         std::vector<InProgress> inProgress;
-        auto bond = [&](double h, double c) { terms.push_back({h, c * std::exp(-0.5 * h * h * zeta)}); };
+        auto bond = [&](const Load& h, double c) { terms.push_back({h.h1, h.h2, c * std::exp(-0.5 * quad(h, cov))}); };
         for (const FixedItem& f : tr.fixed)
             if (f.end > t + kEps) bond(f.h, f.c);
         for (const FloatItem& f : tr.floating) {
@@ -89,7 +108,7 @@ Valuation valuationAt(const std::vector<Trade>& trades, double t, double zeta) {
                 bond(f.hs, f.n * f.ds);
                 bond(f.he, -f.n * f.de);
             } else {
-                inProgress.push_back({f.he, f.n * f.de * std::exp(-0.5 * f.he * f.he * zeta), f.id});
+                inProgress.push_back({f.he.h1, f.he.h2, f.n * f.de * std::exp(-0.5 * quad(f.he, cov)), f.id});
             }
         }
         v.terms.push_back(std::move(terms));
@@ -98,10 +117,10 @@ Valuation valuationAt(const std::vector<Trade>& trades, double t, double zeta) {
     return v;
 }
 
-double tradeValue(const Valuation& v, std::size_t trade, double x, const std::vector<double>& rates) {
+double tradeValue(const Valuation& v, std::size_t trade, double x1, double x2, const std::vector<double>& rates) {
     double value = 0.0;
-    for (const Term& t : v.terms[trade]) value += t.c * std::exp(-t.h * x);
-    for (const InProgress& p : v.fixedRates[trade]) value += p.c * std::exp(-p.h * x) * rates[p.id];
+    for (const Term& t : v.terms[trade]) value += t.c * std::exp(-t.h1 * x1 - t.h2 * x2);
+    for (const InProgress& p : v.fixedRates[trade]) value += p.c * std::exp(-p.h1 * x1 - p.h2 * x2) * rates[p.id];
     return value;
 }
 
@@ -143,8 +162,10 @@ std::vector<double> exposureTimes(const std::vector<instruments::Swap>& trades, 
     return out;
 }
 
-ExposureProfile simulateExposure(const models::Lgm1F& model, const std::vector<instruments::Swap>& swaps, const market::CurveSet<double>& curves,
-                                 const std::vector<double>& times, const std::optional<Csa>& csa, const ExposureOptions& opt) {
+namespace {
+
+ExposureProfile simulate(const Dynamics& model, const std::vector<instruments::Swap>& swaps, const market::CurveSet<double>& curves,
+                         const std::vector<double>& times, const std::optional<Csa>& csa, const ExposureOptions& opt) {
     RL_REQUIRE(!swaps.empty(), "simulateExposure: no trades");
     RL_REQUIRE(!times.empty() && times.front() == 0.0, "simulateExposure: exposure times must start at 0");
     for (std::size_t i = 1; i < times.size(); ++i) RL_REQUIRE(times[i] > times[i - 1] + kEps, "simulateExposure: exposure times must be strictly increasing");
@@ -160,12 +181,16 @@ ExposureProfile simulateExposure(const models::Lgm1F& model, const std::vector<i
     // --- The simulation dates: exposure dates, the dates collateral is called on, and the dates on
     //     which a floating coupon's rate is fixed. --------------------------------------------------
     struct Reset {
-        double hs, he, ratio; ///< ratio = D(start)/D(end)
+        Load hs, he;
+        double ratio; ///< D(start)/D(end)
         std::size_t id;
     };
     struct Step {
-        double time = 0.0, sd = 0.0, zeta = 0.0;
-        double h = 0.0, df = 1.0;       ///< H(t), D(t): for the numeraire
+        double time = 0.0;
+        Cov cov;                         ///< C(t)
+        double a11 = 0.0, a21 = 0.0, a22 = 0.0; ///< Cholesky factor of C(t) − C(previous step)
+        Load h;                          ///< L(t): for the numeraire
+        double df = 1.0;                 ///< D(t)
         std::ptrdiff_t exposure = -1;   ///< index into `times`, or −1
         std::ptrdiff_t collateralFor = -1; ///< the exposure date whose collateral is called here, or −1
         bool valued = false;
@@ -186,9 +211,13 @@ ExposureProfile simulateExposure(const models::Lgm1F& model, const std::vector<i
         if (!steps.empty() && t < steps.back().time + kEps) continue;
         Step s;
         s.time = t;
-        s.zeta = model.zeta(t);
-        s.sd = std::sqrt(std::max(s.zeta - (steps.empty() ? 0.0 : steps.back().zeta), 0.0));
-        s.h = model.H(t);
+        s.cov = model.covariance(t);
+        const Cov before = steps.empty() ? Cov{} : steps.back().cov;
+        const double d11 = std::max(s.cov.c11 - before.c11, 0.0), d12 = s.cov.c12 - before.c12, d22 = std::max(s.cov.c22 - before.c22, 0.0);
+        s.a11 = std::sqrt(d11);
+        s.a21 = s.a11 > 0.0 ? d12 / s.a11 : 0.0;
+        s.a22 = std::sqrt(std::max(d22 - s.a21 * s.a21, 0.0));
+        s.h = model.loading(t);
         s.df = disc.df(t);
         steps.push_back(std::move(s));
     }
@@ -211,7 +240,7 @@ ExposureProfile simulateExposure(const models::Lgm1F& model, const std::vector<i
         for (const FloatItem& f : t.floating)
             if (f.start > kEps && f.start < times.back()) stepAt(f.start).resets.push_back({f.hs, f.he, f.ds / f.de, f.id});
     for (Step& s : steps)
-        if (s.valued) s.valuation = valuationAt(trades, s.time, s.zeta);
+        if (s.valued) s.valuation = valuationAt(trades, s.time, s.cov);
 
     // Coupons already accruing today have their rate fixed off today's curve.
     std::vector<double> ratesToday(rateCount, 0.0);
@@ -232,10 +261,10 @@ ExposureProfile simulateExposure(const models::Lgm1F& model, const std::vector<i
     }
 
     // --- Today ---------------------------------------------------------------------------------------
-    const Valuation today = valuationAt(trades, 0.0, 0.0);
+    const Valuation today = valuationAt(trades, 0.0, Cov{});
     double collateralToday = 0.0;
     for (std::size_t k = 0; k < nTrades; ++k) {
-        const double v = tradeValue(today, k, 0.0, ratesToday);
+        const double v = tradeValue(today, k, 0.0, 0.0, ratesToday);
         out.valueToday += v;
         out.grossEpe[0] += std::max(v, 0.0);
     }
@@ -255,21 +284,24 @@ ExposureProfile simulateExposure(const models::Lgm1F& model, const std::vector<i
     for (std::size_t p = 0; p < opt.paths; ++p) {
         rates = ratesToday;
         std::fill(collateral.begin(), collateral.end(), collateralToday); // margin period reaching back to today
-        double x = 0.0;
+        double x1 = 0.0, x2 = 0.0;
         for (const Step& s : steps) {
-            x += s.sd * rng.gaussian();
-            // P(s, e; x) = D(e)/D(s) exp(−(H_e − H_s) x − ½ (H_e² − H_s²) ζ): the term rate fixed here.
-            for (const Reset& r : s.resets) rates[r.id] = r.ratio * std::exp((r.he - r.hs) * x + 0.5 * (r.he * r.he - r.hs * r.hs) * s.zeta) - 1.0;
+            const double z1 = rng.gaussian();
+            x1 += s.a11 * z1;
+            if (model.twoFactor) x2 += s.a21 * z1 + s.a22 * rng.gaussian();
+            // P(s, e; x) = D(e)/D(s) exp(−(L_e − L_s)·x − ½ (L_eᵀ C L_e − L_sᵀ C L_s)): the term rate fixed here.
+            for (const Reset& r : s.resets)
+                rates[r.id] = r.ratio * std::exp((r.he.h1 - r.hs.h1) * x1 + (r.he.h2 - r.hs.h2) * x2 + 0.5 * (quad(r.he, s.cov) - quad(r.hs, s.cov))) - 1.0;
             if (!s.valued) continue;
             double net = 0.0, gross = 0.0;
             for (std::size_t k = 0; k < nTrades; ++k) {
-                const double v = tradeValue(s.valuation, k, x, rates);
+                const double v = tradeValue(s.valuation, k, x1, x2, rates);
                 net += v;
                 gross += std::max(v, 0.0);
             }
             if (s.collateralFor >= 0) {
                 // The agreement works in money: undo the deflation, apply the terms, deflate again.
-                const double numeraire = std::exp(s.h * x + 0.5 * s.h * s.h * s.zeta) / s.df;
+                const double numeraire = std::exp(s.h.h1 * x1 + s.h.h2 * x2 + 0.5 * quad(s.h, s.cov)) / s.df;
                 collateral[static_cast<std::size_t>(s.collateralFor)] = collateralCall(*csa, net * numeraire) / numeraire;
             }
             if (s.exposure < 0) continue;
@@ -302,6 +334,44 @@ ExposureProfile simulateExposure(const models::Lgm1F& model, const std::vector<i
         }
     }
     return out;
+}
+
+/// The latest date any trade's cashflows reach: the two-factor model's loadings are measured from it.
+double horizonOf(const std::vector<instruments::Swap>& swaps, const market::CurveSet<double>& curves) {
+    double h = 0.0;
+    for (const auto& s : swaps)
+        for (const auto& cf : s.fixedLeg().cashflows()) h = std::max(h, curves.discount().time(std::get<FixedCoupon>(cf).payment));
+    return h;
+}
+
+} // namespace
+
+ExposureProfile simulateExposure(const models::Lgm1F& model, const std::vector<instruments::Swap>& swaps, const market::CurveSet<double>& curves,
+                                 const std::vector<double>& times, const std::optional<Csa>& csa, const ExposureOptions& opt) {
+    Dynamics d;
+    d.twoFactor = false;
+    d.loading = [&](double T) { return Load{model.H(T), 0.0}; };
+    d.covariance = [&](double t) { return Cov{model.zeta(t), 0.0, 0.0}; };
+    return simulate(d, swaps, curves, times, csa, opt);
+}
+
+ExposureProfile simulateExposure(const models::G2pp& model, const std::vector<instruments::Swap>& swaps, const market::CurveSet<double>& curves,
+                                 const std::vector<double>& times, const std::optional<Csa>& csa, const ExposureOptions& opt) {
+    RL_REQUIRE(!swaps.empty(), "simulateExposure: no trades");
+    // Under the textbook numeraire a fast factor makes path weights vary over many orders of magnitude;
+    // measured from the last cashflow date every deflated bond stays well scaled (models/g2pp.hpp).
+    const double horizon = horizonOf(swaps, curves);
+    Dynamics d;
+    d.twoFactor = true;
+    d.loading = [&](double T) {
+        const models::G2pp::Loading l = model.loading(T, horizon);
+        return Load{l.h1, l.h2};
+    };
+    d.covariance = [&](double t) {
+        const models::G2pp::Covariance c = model.covariance(t);
+        return Cov{c.c11, c.c12, c.c22};
+    };
+    return simulate(d, swaps, curves, times, csa, opt);
 }
 
 } // namespace rl::xva
