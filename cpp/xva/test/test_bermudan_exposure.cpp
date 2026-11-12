@@ -2,6 +2,8 @@
 #include "rl/xva/bermudan_exposure.hpp"
 
 #include "rl/core/error.hpp"
+#include "rl/models/g2pp_calibration.hpp"
+#include "rl/pricers/bermudan_g2pp.hpp"
 #include "rl/models/lgm_swaption.hpp"
 #include "rl/pricers/bermudan_pde.hpp"
 #include "rl/xva/xva.hpp"
@@ -84,4 +86,42 @@ TEST_CASE("Bermudan exposure: more rights to exercise mean more exposure at the 
     CHECK(all.price > bermudanExposure(late).price);
     CHECK_THROWS_AS(bermudanExposure(b.problem, {.paths = 10}), rl::InputError);
     CHECK_THROWS_AS(bermudanExposure(b.problem, {.gridPoints = 100}), rl::InputError);
+}
+
+TEST_CASE("Two-factor Bermudan exposure with the second factor off matches the one-factor grid", "[xva][bermudan][g2pp]") {
+    const pricers::CalibratedBermudan one = bermudan(0.035);
+    const BermudanExposure grid = bermudanExposure(one.problem, {.paths = 200000});
+    const pricers::CalibratedBermudanG2pp two = pricers::calibrateBermudanG2pp(usdMarket(), spotSwap(10, 0.035), 1.0, 0, models::G2pp(0.03, 1.0, 0.01, 0.0, 0.0));
+    const BermudanExposure amc = bermudanExposureG2pp(two.calibration.model, two.rights);
+    // A regression rule is a lower bound, and a good one: within a basis point of the optimal price.
+    CHECK(amc.price <= grid.price + 4.0 * amc.simulatedPriceStandardError);
+    CHECK(amc.price >= grid.price - 4.0 * amc.simulatedPriceStandardError - 1.0 * kBp);
+    REQUIRE(amc.times.size() == grid.times.size());
+    for (std::size_t i = 1; i < grid.times.size(); ++i) {
+        INFO("date " << i << ": regression " << amc.epe[i] / kBp << " bp, grid " << grid.epe[i] / kBp << " bp");
+        CHECK_THAT(amc.epe[i], WithinAbs(grid.epe[i], 0.01 * grid.epe[i] + 4.0 * (amc.epeStandardError[i] + grid.epeStandardError[i])));
+        // The split between option and swap is a price too, so it must agree. (Exercise frequencies need
+        // not: the two simulations run under different numeraires.)
+        CHECK_THAT(amc.optionEpe[i], WithinAbs(grid.optionEpe[i], 0.02 * grid.epe[i] + 4.0 * (amc.epeStandardError[i] + grid.epeStandardError[i])));
+    }
+}
+
+TEST_CASE("Two-factor Bermudan exposure: an option until exercised, whatever the correlation", "[xva][bermudan][g2pp]") {
+    for (double rho : {-0.7, 0.5}) {
+        const pricers::CalibratedBermudanG2pp b = pricers::calibrateBermudanG2pp(usdMarket(), spotSwap(10, 0.035), 1.0, 0, models::G2pp(0.40, 0.03, 0.012, 0.009, rho));
+        const BermudanExposure e = bermudanExposureG2pp(b.calibration.model, b.rights);
+        // The independent pricing regression gives the same lower bound, to sampling error.
+        const pricers::G2ppLsmcResult ref = pricers::priceBermudanLsmcG2pp(b.calibration.model, b.rights);
+        CHECK_THAT(e.price, WithinAbs(ref.lower, 4.0 * (e.simulatedPriceStandardError + ref.standardError) + 1.0 * kBp));
+        CHECK_THAT(e.epe[1], WithinAbs(e.price, 0.01 * e.price + 4.0 * e.epeStandardError[1])); // a martingale to the first date
+        CHECK(e.ene[1] == 0.0);
+        for (std::size_t i = 1; i < e.times.size(); ++i) {
+            CHECK(e.epe[i] >= e.optionEpe[i]);
+            CHECK(e.exercisedBy[i] >= e.exercisedBy[i - 1]);
+        }
+        CHECK(e.optionEpe.back() == 0.0);
+    }
+    const pricers::CalibratedBermudanG2pp b = pricers::calibrateBermudanG2pp(usdMarket(), spotSwap(10, 0.035), 1.0, 0, models::G2pp(0.40, 0.03, 0.012, 0.009, -0.7));
+    CHECK_THROWS_AS(bermudanExposureG2pp(b.calibration.model, {}), rl::InputError);
+    CHECK_THROWS_AS(bermudanExposureG2pp(b.calibration.model, {b.rights[2], b.rights[1]}), rl::InputError);
 }
