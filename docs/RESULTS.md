@@ -25,12 +25,12 @@ Fed Funds cashflows are discounted on SOFR. Neither curve can be built before th
 
 | Interpolation | Method | Newton iterations | Worst residual (bp) | Worst instrument | Time (ms) |
 | --- | --- | ---: | ---: | --- | ---: |
-| linear_logdf | global Newton (adjoint Jacobian) | 4 | 4.7e-11 | SOFR-OIS-1W | 4.7 |
-| linear_logdf | global Newton (finite-difference Jacobian) | 4 | 6.7e-11 | SOFR-OIS-1W | 39.6 |
-| linear_logdf | sequential (one pass curve by curve) | 5 | 5.0e+00 | FF-SOFR-25Y | 5.4 |
-| monotone_convex | global Newton (adjoint Jacobian) | 4 | 6.4e-11 | FF-SOFR-30Y | 11.2 |
-| monotone_convex | global Newton (finite-difference Jacobian) | 4 | 4.7e-11 | SOFR-OIS-1W | 57.5 |
-| monotone_convex | sequential (one pass curve by curve) | 8 | 5.0e+00 | FF-SOFR-25Y | 20.2 |
+| linear_logdf | global Newton (adjoint Jacobian) | 4 | 4.7e-11 | SOFR-OIS-1W | 4.8 |
+| linear_logdf | global Newton (finite-difference Jacobian) | 4 | 6.7e-11 | SOFR-OIS-1W | 31.1 |
+| linear_logdf | sequential (one pass curve by curve) | 5 | 5.0e+00 | FF-SOFR-25Y | 3.8 |
+| monotone_convex | global Newton (adjoint Jacobian) | 4 | 6.4e-11 | FF-SOFR-30Y | 7.4 |
+| monotone_convex | global Newton (finite-difference Jacobian) | 4 | 4.7e-11 | SOFR-OIS-1W | 33.1 |
+| monotone_convex | sequential (one pass curve by curve) | 8 | 5.0e+00 | FF-SOFR-25Y | 17.8 |
 
 - The global solve reprices every instrument to about 1e-10 bp in four iterations under both interpolations
   (worst residuals: linear_logdf 4.7e-11 bp, monotone_convex 6.4e-11 bp).
@@ -56,12 +56,12 @@ A book of 200 swaps (1–30 years, both directions), delta to all 37 curve quote
 
 | Method | Time (ms) | Relative to one valuation |
 | --- | ---: | ---: |
-| one valuation of the book | 0.38 | 1× |
-| adjoint + implicit-function theorem | 2.23 | 6× |
-| bump and re-bootstrap each quote | 184.48 | 485× |
+| one valuation of the book | 0.26 | 1× |
+| adjoint + implicit-function theorem | 1.61 | 6× |
+| bump and re-bootstrap each quote | 130.02 | 502× |
 
 - Adjoint: one reverse sweep gives the sensitivity to every curve node; one transposed linear solve with the
-  bootstrap Jacobian (implicit-function theorem) converts node risk to par-quote risk. **83× faster**
+  bootstrap Jacobian (implicit-function theorem) converts node risk to par-quote risk. **81× faster**
   than bumping here, and the cost does not grow with the number of quotes.
 - The two agree to 1e-05 of the largest delta when the bump is small (0.01 bp). A 1 bp bump differs
   by about 1e-3 because it also contains the gamma.
@@ -90,7 +90,7 @@ cube holds one SABR smile per (expiry, tenor): α sets the level, ρ the skew, �
 fixed as policy. α is re-solved from the at-the-money quote at every step of the fit, so every node reprices
 its ATM vol exactly and only ρ and ν are searched.
 
-- All 81 nodes fit with no parameter on a bound. Worst residual 0.016 bp
+- All 81 nodes fit with no parameter on a bound. Worst residual 0.013 bp
   (3Mx30Y); the quotes are rounded to 0.01 bp, so this is the rounding of the input.
 - 3–5 solver iterations per node, from a starting point computed from the smile's
   skew and curvature at the money.
@@ -98,23 +98,23 @@ its ATM vol exactly and only ρ and ν are searched.
   is bounded, a normal one is not) and that is reported rather than clamped.
 
 **Where the model breaks.** Hagan's formula is an expansion, not a model: far enough below the forward its
-implied density goes negative, which is a butterfly arbitrage. 50 of the 81 nodes have a
+implied density goes negative, which is a butterfly arbitrage. 51 of the 81 nodes have a
 negative density somewhere inside four standard deviations. The first few, by expiry:
 
 | Node | Forward % | ATM vol (bp) | ρ | ν | Fit residual (bp) | Density < 0 below strike % |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1Yx1Y | 3.3252 | 98.35 | -0.0991 | 0.4628 | 0.0041 | 0.046 |
-| 1Yx2Y | 3.3843 | 95.81 | -0.1034 | 0.4510 | 0.0030 | 0.028 |
-| 1Yx3Y | 3.4297 | 93.86 | -0.1072 | 0.4412 | 0.0017 | 0.027 |
-| 1Yx5Y | 3.4961 | 91.16 | -0.1139 | 0.4269 | 0.0036 | 0.027 |
-| 1Yx7Y | 3.5442 | 89.47 | -0.1193 | 0.4173 | 0.0046 | 0.027 |
-| 2Yx1Y | 3.3726 | 92.94 | -0.1332 | 0.3398 | 0.0035 | 0.053 |
-| 2Yx2Y | 3.4292 | 90.40 | -0.1380 | 0.3282 | 0.0034 | 0.052 |
-| 2Yx3Y | 3.4724 | 88.45 | -0.1415 | 0.3185 | 0.0029 | 0.052 |
-| 2Yx5Y | 3.5348 | 85.75 | -0.1485 | 0.3036 | 0.0037 | 0.030 |
-| 2Yx7Y | 3.5796 | 84.06 | -0.1538 | 0.2943 | 0.0032 | 0.030 |
-| 2Yx10Y | 3.6295 | 82.59 | -0.1606 | 0.2850 | 0.0052 | 0.030 |
-| 2Yx15Y | 3.6866 | 81.45 | -0.1675 | 0.2784 | 0.0047 | 0.030 |
+| 1Yx1Y | 3.3252 | 95.40 | -0.0990 | 0.4628 | 0.0037 | 0.027 |
+| 1Yx2Y | 3.3843 | 91.29 | -0.1033 | 0.4510 | 0.0049 | 0.027 |
+| 1Yx3Y | 3.4297 | 89.96 | -0.1072 | 0.4411 | 0.0057 | 0.027 |
+| 1Yx5Y | 3.4961 | 90.43 | -0.1140 | 0.4265 | 0.0020 | 0.027 |
+| 1Yx7Y | 3.5442 | 91.52 | -0.1194 | 0.4171 | 0.0034 | 0.028 |
+| 1Yx10Y | 3.5982 | 92.12 | -0.1259 | 0.4082 | 0.0028 | 0.028 |
+| 2Yx1Y | 3.3726 | 86.75 | -0.1335 | 0.3399 | 0.0049 | 0.051 |
+| 2Yx2Y | 3.4292 | 85.41 | -0.1380 | 0.3281 | 0.0025 | 0.051 |
+| 2Yx3Y | 3.4724 | 85.48 | -0.1414 | 0.3183 | 0.0032 | 0.051 |
+| 2Yx5Y | 3.5348 | 86.75 | -0.1485 | 0.3035 | 0.0028 | 0.031 |
+| 2Yx7Y | 3.5796 | 87.70 | -0.1541 | 0.2939 | 0.0043 | 0.031 |
+| 2Yx10Y | 3.6295 | 87.85 | -0.1601 | 0.2851 | 0.0030 | 0.031 |
 
 ![sabr_smile.png](img/sabr_smile.png)
 
@@ -133,17 +133,17 @@ Calibration at κ = 3%:
 
 | Expiry date | Expiry (y) | Tenor (y) | Forward % | Market vol (bp) | Model vol (bp) | Error (bp) | σ (bp) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2027-09-09 | 1.01 | 9.0 | 3.4216 | 88.67 | 88.67 | 3e-13 | 100.5 |
-| 2028-09-11 | 2.02 | 8.0 | 3.4364 | 83.71 | 83.71 | 3e-13 | 89.7 |
-| 2029-09-10 | 3.02 | 7.0 | 3.5361 | 80.30 | 80.30 | -5e-13 | 83.1 |
-| 2030-09-09 | 4.02 | 6.0 | 3.5842 | 78.61 | 78.61 | -4e-13 | 83.7 |
-| 2031-09-09 | 5.02 | 5.0 | 3.6280 | 77.86 | 77.86 | 2e-13 | 85.1 |
-| 2032-09-09 | 6.02 | 4.0 | 3.6643 | 78.16 | 78.16 | -9e-14 | 89.8 |
-| 2033-09-09 | 7.02 | 3.0 | 3.7005 | 78.73 | 78.73 | 6e-13 | 91.9 |
-| 2034-09-11 | 8.02 | 2.0 | 3.7378 | 80.22 | 80.22 | 4e-13 | 99.1 |
-| 2035-09-10 | 9.02 | 1.0 | 3.7739 | 82.38 | 82.38 | 3e-13 | 106.3 |
+| 2027-09-09 | 1.01 | 9.0 | 3.4216 | 92.16 | 92.16 | -5e-13 | 104.5 |
+| 2028-09-11 | 2.02 | 8.0 | 3.4364 | 87.94 | 87.94 | 2e-13 | 95.4 |
+| 2029-09-10 | 3.02 | 7.0 | 3.5361 | 85.14 | 85.14 | 1e-13 | 90.0 |
+| 2030-09-09 | 4.02 | 6.0 | 3.5842 | 82.95 | 82.95 | 7e-13 | 87.0 |
+| 2031-09-09 | 5.02 | 5.0 | 3.6280 | 81.79 | 81.79 | 3e-13 | 87.8 |
+| 2032-09-09 | 6.02 | 4.0 | 3.6643 | 80.44 | 80.44 | 4e-13 | 84.2 |
+| 2033-09-09 | 7.02 | 3.0 | 3.7005 | 79.67 | 79.67 | -1e-14 | 85.4 |
+| 2034-09-11 | 8.02 | 2.0 | 3.7378 | 78.66 | 78.66 | 5e-13 | 81.8 |
+| 2035-09-10 | 9.02 | 1.0 | 3.7739 | 78.19 | 78.19 | -3e-13 | 84.1 |
 
-Worst repricing error over κ = 0%, 3%, 10%: 1e-12 bp.
+Worst repricing error over κ = 0%, 3%, 10%: 7e-13 bp.
 
 ![lgm_sigma.png](img/lgm_sigma.png)
 
@@ -160,10 +160,10 @@ the value of keeping the option. Prices are in basis points of notional; κ = 3%
 
 | Trade | Best European | Lower bound (LSMC) | PDE | Upper bound (A–B) | Duality gap | P(exercise) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 10nc1 payer 2.50% (ITM) | 738.8 | 851.60 ± 0.14 | 851.42 | 852.33 ± 0.17 | 0.73 ± 0.08 | 91% |
-| 10nc1 payer 3.50% (near ATM) | 322.8 | 442.91 ± 0.11 | 442.88 | 443.35 ± 0.12 | 0.43 ± 0.05 | 76% |
-| 10nc1 payer 4.50% (OTM) | 144.6 | 222.99 ± 0.10 | 222.98 | 223.17 ± 0.11 | 0.18 ± 0.03 | 59% |
-| 10nc1 receiver 3.50% | 331.4 | 431.74 ± 0.16 | 431.91 | 432.29 ± 0.18 | 0.55 ± 0.07 | 61% |
+| 10nc1 payer 2.50% (ITM) | 744.3 | 864.05 ± 0.15 | 863.86 | 864.55 ± 0.16 | 0.50 ± 0.06 | 90% |
+| 10nc1 payer 3.50% (near ATM) | 341.7 | 457.83 ± 0.12 | 457.81 | 458.29 ± 0.13 | 0.46 ± 0.06 | 75% |
+| 10nc1 payer 4.50% (OTM) | 157.5 | 233.46 ± 0.11 | 233.50 | 233.68 ± 0.12 | 0.22 ± 0.04 | 57% |
+| 10nc1 receiver 3.50% | 347.0 | 447.47 ± 0.17 | 447.66 | 447.97 ± 0.18 | 0.50 ± 0.07 | 60% |
 
 - **Lower bound.** Longstaff–Schwartz: fit an exercise rule by regression on 20,000 paths, then value that
   rule on 4 million independent paths. Any rule is a strategy the holder could follow, so it cannot be
@@ -173,20 +173,20 @@ the value of keeping the option. Prices are in basis points of notional; κ = 3%
 - **PDE.** Crank–Nicolson on a 1600 × 1600 grid, converged to about 0.003 bp, and confirmed to 0.001 bp
   by an independent backward induction that integrates against the exact Gaussian transition density.
 - The three agree on every trade: the PDE lies within two standard errors of both bounds (the largest
-  excursion is 1.3 standard errors), and the duality gap, which is measured much more precisely
+  excursion is 1.2 standard errors), and the duality gap, which is measured much more precisely
   than either bound, is
-  0.2–0.7 bp, about 0.1% of the price.
+  0.2–0.5 bp, about 0.1% of the price.
 - The Bermudan is worth far more than its best single European: the right to choose the date is a large
   part of the value, more so out of the money.
 
-Wall-clock per pricing (PDE at 400 × 400, which is already within 0.05 bp):
+Wall-clock per pricing (PDE at 400 × 400, which is already within 0.07 bp):
 
 | Trade | PDE (ms) | LSMC, 4M paths (ms) | Upper bound (ms) |
 | --- | ---: | ---: | ---: |
-| 10nc1 payer 2.50% (ITM) | 2.3 | 1745 | 1613 |
-| 10nc1 payer 3.50% (near ATM) | 2.3 | 2446 | 2119 |
-| 10nc1 payer 4.50% (OTM) | 2.3 | 2645 | 2871 |
-| 10nc1 receiver 3.50% | 2.3 | 2491 | 2437 |
+| 10nc1 payer 2.50% (ITM) | 2.1 | 1345 | 1364 |
+| 10nc1 payer 3.50% (near ATM) | 1.8 | 1940 | 1674 |
+| 10nc1 payer 4.50% (OTM) | 1.6 | 2109 | 2170 |
+| 10nc1 receiver 3.50% | 2.0 | 1896 | 1741 |
 
 ### 5.1 PDE: what converges, and what Rannacher start-up actually buys
 
@@ -195,19 +195,19 @@ discounting terms: the change of numeraire has absorbed them.
 
 | Steps (space = time) | Error with Rannacher (bp) | Error, Crank–Nicolson only (bp) | Time (ms) |
 | --- | ---: | ---: | ---: |
-| 50 | 4.9e+00 | 4.4e+00 | 0.07 |
-| 100 | 4.4e-01 | 3.1e-01 | 0.21 |
-| 200 | 4.1e-01 | 3.8e-01 | 0.67 |
-| 400 | 4.8e-02 | 3.8e-02 | 2.28 |
-| 800 | 5.0e-03 | 2.7e-03 | 8.47 |
-| 1600 | 3.7e-03 | 3.1e-03 | 33.10 |
-| 3200 | 5.0e-04 | 3.5e-04 | 134.06 |
+| 50 | 3.6e+00 | 3.2e+00 | 0.05 |
+| 100 | 8.4e-01 | 7.4e-01 | 0.15 |
+| 200 | 1.3e-01 | 1.0e-01 | 0.46 |
+| 400 | 6.6e-02 | 5.9e-02 | 1.90 |
+| 800 | 2.4e-03 | 6.3e-04 | 7.40 |
+| 1600 | 2.8e-03 | 2.3e-03 | 23.92 |
+| 3200 | 4.9e-05 | 6.0e-05 | 103.58 |
 
 ![pde_convergence.png](img/pde_convergence.png)
 
-- **Second order overall, not monotone.** The error falls 10,000-fold over a 64-fold refinement, but
-  unevenly: it depends on where the exercise boundary falls between grid nodes, so one doubling can do
-  nothing and the next cut the error sixteen-fold. Convergence has to be judged over several doublings.
+- **Second order overall, not monotone.** The error falls 72,836-fold over a 64-fold refinement, but
+  unevenly: it depends on where the exercise boundary falls between grid nodes, so one doubling can change
+  it by a factor of 0.9 and another by 56. Convergence has to be judged over several doublings.
 - **Rannacher start-up costs price accuracy here.** The textbook advice is to replace the first steps after
   each exercise date with implicit ones, to damp the oscillations Crank–Nicolson would otherwise carry. For
   this payoff the price is *more* accurate without it (middle panel): exercising creates a kink, not a
@@ -218,35 +218,35 @@ discounting terms: the change of numeraire has absorbed them.
 
 ### 5.2 Monte Carlo: the exercise rule, the bias, the error
 
-PDE reference 442.88 bp.
+PDE reference 457.81 bp.
 
 | Regressors | Degree | Lower bound (bp) | Duality gap (bp) |
 | --- | ---: | ---: | ---: |
-| state | 0 | 433.55 ± 0.36 | 9.90 ± 0.44 |
-| state | 1 | 441.94 ± 0.36 | 0.76 ± 0.08 |
-| state | 2 | 442.22 ± 0.36 | 0.49 ± 0.06 |
-| state | 3 | 442.30 ± 0.35 | 0.39 ± 0.05 |
-| state | 4 | 442.31 ± 0.35 | 0.42 ± 0.06 |
-| state | 6 | 442.31 ± 0.35 | 0.47 ± 0.06 |
-| exercise value | 0 | 433.55 ± 0.36 | 9.90 ± 0.44 |
-| exercise value | 1 | 441.23 ± 0.36 | 1.46 ± 0.13 |
-| exercise value | 2 | 442.27 ± 0.36 | 0.41 ± 0.06 |
-| exercise value | 3 | 442.31 ± 0.35 | 0.43 ± 0.05 |
-| exercise value | 4 | 442.30 ± 0.35 | 0.41 ± 0.06 |
-| exercise value | 6 | 442.33 ± 0.35 | 0.44 ± 0.05 |
+| state | 0 | 446.83 ± 0.38 | 12.65 ± 0.53 |
+| state | 1 | 456.87 ± 0.37 | 0.77 ± 0.08 |
+| state | 2 | 457.10 ± 0.37 | 0.55 ± 0.07 |
+| state | 3 | 457.18 ± 0.37 | 0.54 ± 0.07 |
+| state | 4 | 457.17 ± 0.37 | 0.52 ± 0.07 |
+| state | 6 | 457.19 ± 0.37 | 0.56 ± 0.07 |
+| exercise value | 0 | 446.83 ± 0.38 | 12.65 ± 0.53 |
+| exercise value | 1 | 456.22 ± 0.38 | 1.52 ± 0.13 |
+| exercise value | 2 | 457.17 ± 0.37 | 0.55 ± 0.06 |
+| exercise value | 3 | 457.17 ± 0.37 | 0.43 ± 0.06 |
+| exercise value | 4 | 457.20 ± 0.37 | 0.37 ± 0.06 |
+| exercise value | 6 | 457.21 ± 0.37 | 0.40 ± 0.06 |
 
 ![lsmc.png](img/lsmc.png)
 
-- **Degree 0** (continuation value = a constant, so the rule cannot see the state) loses about 9 bp, and
+- **Degree 0** (continuation value = a constant, so the rule cannot see the state) loses about 11 bp, and
   the gap shows it without needing the PDE: the gap is a model-free measure of how good the rule is.
 - **Degree 1–2 is already enough** in a one-factor model; beyond degree 3 nothing improves. Regressing on
   the swap's value works as well as regressing on the state, and is the choice that carries over to models
   with more factors.
 - **In-sample bias.** Valuing the rule on its own training paths overstates the price, by about
-  15 bp with 250 paths; on fresh paths
+  16 bp with 250 paths; on fresh paths
   the same rule is *below* the true price, as a lower bound must be. The two meet as the training set grows.
   (Averages over 200 seeds.)
-- **Error** falls as 1/√N; antithetic paths cut it by 1.8×, the equivalent of 3.1× the paths.
+- **Error** falls as 1/√N; antithetic paths cut it by 1.8×, the equivalent of 3.2× the paths.
 
 ## 6. What drives the Bermudan: model and product behaviour
 
@@ -256,19 +256,19 @@ PDE reference 442.88 bp.
 
 | κ | Bermudan (bp) | Best European (bp) | Switch value (bp) |
 | --- | ---: | ---: | ---: |
-| -2.0% | 420.5 | 322.8 | 97.6 |
-| -1.0% | 424.9 | 322.8 | 102.1 |
-| 0.0% | 429.4 | 322.8 | 106.5 |
-| 1.0% | 433.9 | 322.8 | 111.0 |
-| 2.0% | 438.4 | 322.8 | 115.5 |
-| 3.0% | 442.9 | 322.8 | 120.0 |
-| 5.0% | 451.9 | 322.8 | 129.0 |
-| 7.5% | 463.1 | 322.8 | 140.3 |
-| 10.0% | 474.4 | 322.8 | 151.6 |
-| 15.0% | 496.7 | 322.8 | 173.8 |
+| -2.0% | 434.0 | 341.7 | 92.4 |
+| -1.0% | 438.8 | 341.7 | 97.1 |
+| 0.0% | 443.5 | 341.7 | 101.9 |
+| 1.0% | 448.3 | 341.7 | 106.6 |
+| 2.0% | 453.0 | 341.7 | 111.4 |
+| 3.0% | 457.8 | 341.7 | 116.1 |
+| 5.0% | 467.3 | 341.7 | 125.7 |
+| 7.5% | 479.3 | 341.7 | 137.6 |
+| 10.0% | 491.2 | 341.7 | 149.5 |
+| 15.0% | 514.8 | 341.7 | 173.1 |
 
-From κ = -2% to 15% the switch value goes from 98 to
-174 bp with every calibration instrument repriced exactly throughout. Higher κ
+From κ = -2% to 15% the switch value goes from 92 to
+173 bp with every calibration instrument repriced exactly throughout. Higher κ
 means a shock today has decayed by the later exercise dates, so the exercise decisions are less correlated
 and the right to choose among them is worth more. κ is the number a Bermudan desk marks, and this table is
 its price.
@@ -280,15 +280,15 @@ middle panel adds the nine dates one at a time from the last.
 
 | Call date | Forward swap rate % | European (bp) | Exercise if swap rate above % | P(exercise here) |
 | --- | ---: | ---: | ---: | ---: |
-| 2027-09-09 | 3.4216 | 238.2 | 4.5438 | 11.7% |
-| 2028-09-11 | 3.4364 | 289.8 | 4.5935 | 11.2% |
-| 2029-09-10 | 3.5361 | 322.8 | 4.4224 | 12.3% |
-| 2030-09-09 | 3.5842 | 317.6 | 4.3413 | 8.4% |
-| 2031-09-09 | 3.6280 | 294.7 | 4.2527 | 7.7% |
-| 2032-09-09 | 3.6643 | 258.2 | 4.1414 | 6.9% |
-| 2033-09-09 | 3.7005 | 209.4 | 4.0076 | 6.1% |
-| 2034-09-11 | 3.7378 | 150.4 | 3.8103 | 6.2% |
-| 2035-09-10 | 3.7739 | 81.1 | 3.5000 | 5.8% |
+| 2027-09-09 | 3.4216 | 248.7 | 4.5882 | 11.8% |
+| 2028-09-11 | 3.4364 | 305.5 | 4.6324 | 11.6% |
+| 2029-09-10 | 3.5361 | 341.7 | 4.4319 | 13.0% |
+| 2030-09-09 | 3.5842 | 333.9 | 4.3326 | 8.5% |
+| 2031-09-09 | 3.6280 | 308.2 | 4.2027 | 8.0% |
+| 2032-09-09 | 3.6643 | 264.9 | 4.0846 | 6.3% |
+| 2033-09-09 | 3.7005 | 211.6 | 3.9266 | 5.8% |
+| 2034-09-11 | 3.7378 | 147.9 | 3.7514 | 5.1% |
+| 2035-09-10 | 3.7739 | 77.5 | 3.5000 | 4.8% |
 
 At the last date the boundary is the strike: nothing is left to wait for. Earlier, the swap must be in the
 money by a margin, about 100 bp at the first call date, because exercising gives up the remaining
@@ -302,23 +302,23 @@ are the co-terminal swaptions, and the model has to keep repricing them after th
 
 ![bermudan_risk.png](img/bermudan_risk.png)
 
-**Delta.** Total 285 per bp against 748 for the swap from the first call date: the option's delta
+**Delta.** Total 286 per bp against 748 for the swap from the first call date: the option's delta
 is about 38% of the underlying's.
 
 | Quote | Bermudan | Forward swap |
 | --- | ---: | ---: |
-| SR3-U6 | -4.9 | -25.0 |
-| SR3-Z6 | -4.9 | -25.0 |
-| SR3-H7 | -4.9 | -25.0 |
-| SR3-M7 | -4.7 | -23.3 |
-| SOFR-OIS-3Y | -31.2 | 0.2 |
-| SOFR-OIS-4Y | -31.7 | 0.2 |
-| SOFR-OIS-5Y | -30.8 | 0.1 |
-| SOFR-OIS-6Y | -32.8 | 0.3 |
-| SOFR-OIS-7Y | -32.6 | 0.5 |
-| SOFR-OIS-8Y | -37.2 | -0.1 |
-| SOFR-OIS-9Y | -42.5 | 2.7 |
-| SOFR-OIS-10Y | 552.9 | 844.2 |
+| SR3-U6 | -5.0 | -25.0 |
+| SR3-Z6 | -5.0 | -25.0 |
+| SR3-H7 | -5.0 | -25.0 |
+| SR3-M7 | -4.8 | -23.3 |
+| SOFR-OIS-3Y | -34.8 | 0.2 |
+| SOFR-OIS-4Y | -30.5 | 0.2 |
+| SOFR-OIS-5Y | -30.1 | 0.1 |
+| SOFR-OIS-6Y | -30.2 | 0.3 |
+| SOFR-OIS-7Y | -30.8 | 0.5 |
+| SOFR-OIS-8Y | -31.6 | -0.1 |
+| SOFR-OIS-9Y | -36.7 | 2.7 |
+| SOFR-OIS-10Y | 540.6 | 844.2 |
 
 The swap's delta is one long bucket at 10 years and a short at its 1-year start. The Bermudan has the same
 long end and a *short in every intermediate year*: it is a probability-weighted mix of swaps starting in
@@ -329,17 +329,17 @@ appears beyond 10 years or on the Fed Funds basis.
 
 | Expiry | Bermudan vega | European's own vega | Ratio |
 | --- | ---: | ---: | ---: |
-| 2027-09-09 | 51.2 | 299.5 | 17% |
-| 2028-09-11 | 59.9 | 370.0 | 16% |
-| 2029-09-10 | 89.0 | 389.1 | 23% |
-| 2030-09-09 | 83.9 | 377.6 | 22% |
-| 2031-09-09 | 75.0 | 344.8 | 22% |
-| 2032-09-09 | 63.7 | 296.2 | 22% |
-| 2033-09-09 | 54.8 | 235.3 | 23% |
-| 2034-09-11 | 44.2 | 164.1 | 27% |
-| 2035-09-10 | 28.4 | 85.4 | 33% |
+| 2027-09-09 | 50.9 | 299.6 | 17% |
+| 2028-09-11 | 60.5 | 370.1 | 16% |
+| 2029-09-10 | 92.7 | 389.2 | 24% |
+| 2030-09-09 | 81.6 | 377.6 | 22% |
+| 2031-09-09 | 74.2 | 344.9 | 22% |
+| 2032-09-09 | 65.1 | 296.3 | 22% |
+| 2033-09-09 | 55.6 | 235.3 | 24% |
+| 2034-09-11 | 43.5 | 164.0 | 27% |
+| 2035-09-10 | 27.5 | 85.4 | 32% |
 
-Total 550 against 2562 for holding all nine Europeans. Each ratio is roughly the hedge ratio in that
+Total 552 against 2562 for holding all nine Europeans. Each ratio is roughly the hedge ratio in that
 European; they are all well below one because the Bermudan is one option on the best of nine, not nine
 options.
 
@@ -352,16 +352,16 @@ is not a model output at all from year 1 on. It is the market's swaption prices.
 
 | Years | EE, closed form (bp) | EE, Monte Carlo (bp) | PFE 97.5% (bp) | ENE (bp) |
 | --- | ---: | ---: | ---: | ---: |
-| 0.01 | 18.0 | 18.0 ± 0.2 | 130 | -60.3 |
-| 1.01 | 238.2 | 237.2 ± 1.6 | 1168 | -296.9 |
-| 2.02 | 289.8 | 286.2 ± 1.8 | 1334 | -331.4 |
-| 3.02 | 322.8 | 325.4 ± 1.9 | 1351 | -302.5 |
-| 4.02 | 317.6 | 316.4 ± 1.7 | 1255 | -277.8 |
-| 5.02 | 294.7 | 291.1 ± 1.6 | 1103 | -245.2 |
-| 6.02 | 258.2 | 259.1 ± 1.3 | 915 | -208.3 |
-| 7.02 | 209.4 | 209.5 ± 1.0 | 701 | -164.5 |
-| 8.03 | 150.4 | 150.7 ± 0.7 | 473 | -115.7 |
-| 9.02 | 81.1 | 81.6 ± 0.4 | 237 | -61.4 |
+| 0.01 | 19.2 | 19.3 ± 0.2 | 136 | -61.6 |
+| 1.01 | 248.7 | 247.6 ± 1.6 | 1212 | -307.4 |
+| 2.02 | 305.5 | 301.7 ± 1.9 | 1395 | -347.0 |
+| 3.02 | 341.7 | 344.4 ± 2.0 | 1419 | -321.4 |
+| 4.02 | 333.9 | 332.8 ± 1.8 | 1309 | -294.1 |
+| 5.02 | 308.2 | 304.5 ± 1.6 | 1143 | -258.7 |
+| 6.02 | 264.9 | 265.9 ± 1.3 | 933 | -215.0 |
+| 7.02 | 211.6 | 211.7 ± 1.0 | 706 | -166.8 |
+| 8.03 | 147.9 | 148.1 ± 0.7 | 468 | -113.2 |
+| 9.02 | 77.5 | 78.0 ± 0.3 | 231 | -57.8 |
 
 ![exposure.png](img/exposure.png)
 
@@ -391,11 +391,11 @@ outer integral is one-dimensional. Price of a 5Y×10Y payer against two-dimensio
 
 | Gauss–Hermite points | Price (bp) | Error (bp) | Time (µs) |
 | ---: | ---: | ---: | ---: |
-| 2 | 423.540144 | 3e-06 | 6 |
-| 4 | 423.540146 | 3e-08 | 10 |
-| 8 | 423.540146 | 3e-08 | 22 |
-| 16 | 423.540146 | 3e-08 | 44 |
-| 24 | 423.540146 | 3e-08 | 65 |
+| 2 | 423.540144 | 3e-06 | 5 |
+| 4 | 423.540146 | 3e-08 | 11 |
+| 8 | 423.540146 | 3e-08 | 21 |
+| 16 | 423.540146 | 3e-08 | 41 |
+| 24 | 423.540146 | 3e-08 | 60 |
 
 Four points already give the price to 3e-08 bp. That is a consequence of the direction chosen for the
 closed form. Brigo and Mercurio condition on the first factor; that is exact, but when the factors are
@@ -405,7 +405,7 @@ and exactly constant in the one-factor limit. The tests check the formula agains
 formula, against two-dimensional integration, and against the one-factor model when the second factor is
 switched off.
 
-### 9.2 Shape from the ATM matrix: what the second factor buys here, and what it does not
+### 9.2 Shape from the ATM matrix: what the second factor buys
 
 Both models are fitted to 30 ATM swaptions (expiries 1Y–10Y, tenors 1Y–20Y) with the same freedom in the
 level: one volatility scale per expiry row. What is left to explain is the tenor direction, which is where
@@ -413,34 +413,41 @@ a second factor can help. The two-factor fit is run from four starting points.
 
 | Model | Start | κ₁ | κ₂ | σ₂/σ₁ | ρ | RMS error (bp) | Worst (bp) | Corr(1Y, 10Y fwd) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| one factor |  | 1.7% |  |  |  | 1.85 | 2.87 | 1.000 |
-| two factors | κ₁ 0.1 ρ -0.9 | 9.4% | 0.1% | 1.13 | -0.04 | 1.57 | 3.76 | 0.938 |
-| two factors | κ₁ 0.1 ρ 0.5 | 3.4% | 0.1% | 0.76 | +0.10 | 1.75 | 3.39 | 0.991 |
-| two factors | κ₁ 0.6 ρ -0.9 | 150.0% | 1.5% | 0.69 | -0.01 | 1.66 | 3.45 | 0.950 |
-| two factors | κ₁ 0.6 ρ 0.5 | 15.5% | 0.1% | 1.85 | +0.49 | 1.50 | 3.57 | 0.975 |
+| one factor |  | 0.8% |  |  |  | 1.72 | 4.28 | 1.000 |
+| two factors | κ₁ 0.1 ρ -0.9 | 37.6% | 3.1% | 0.81 | -0.72 | 0.12 | 0.30 | 0.549 |
+| two factors | κ₁ 0.1 ρ 0.5 | 0.8% | 0.8% | 0.28 | +0.09 | 1.72 | 4.28 | 1.000 |
+| two factors | κ₁ 0.6 ρ -0.9 | 37.6% | 3.1% | 0.81 | -0.72 | 0.12 | 0.30 | 0.549 |
+| two factors | κ₁ 0.6 ρ 0.5 | 37.6% | 3.1% | 0.81 | -0.72 | 0.12 | 0.30 | 0.549 |
 
 Fit errors in bp of normal vol, one factor / two factors (best start), by expiry (rows) and tenor (columns):
 
 | Expiry | 1Y | 2Y | 5Y | 10Y | 20Y |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 1Y | -1.5 / +0.8 | +0.1 / +1.3 | +2.3 / +1.4 | +1.7 / -0.4 | -2.9 / -3.6 |
-| 2Y | -2.0 / -0.4 | -0.2 / +0.6 | +2.3 / +1.4 | +2.0 / +0.3 | -2.2 / -2.2 |
-| 3Y | -2.1 / -1.0 | -0.3 / +0.1 | +2.2 / +1.4 | +2.0 / +0.7 | -1.8 / -1.4 |
-| 5Y | -2.3 / -1.8 | -0.5 / -0.5 | +2.1 / +1.3 | +2.1 / +1.3 | -1.4 / -0.2 |
-| 7Y | -2.5 / -2.4 | -0.6 / -1.0 | +2.0 / +1.2 | +2.2 / +1.7 | -1.0 / +0.8 |
-| 10Y | -2.6 / -3.0 | -0.7 / -1.3 | +2.0 / +1.2 | +2.1 / +2.0 | -0.7 / +1.8 |
+| 1Y | -1.3 / +0.1 | +2.2 / +0.1 | +1.8 / +0.1 | -1.8 / -0.0 | -0.9 / -0.3 |
+| 2Y | +1.3 / -0.2 | +2.4 / +0.0 | +0.0 / +0.1 | -2.8 / +0.1 | -1.1 / -0.1 |
+| 3Y | +1.9 / -0.2 | +1.8 / -0.0 | -0.8 / +0.1 | -2.8 / +0.1 | -0.3 / -0.1 |
+| 5Y | +1.0 / -0.1 | +0.5 / +0.0 | -1.3 / +0.1 | -1.7 / +0.1 | +1.5 / -0.1 |
+| 7Y | -0.2 / -0.1 | -0.5 / -0.0 | -1.3 / +0.0 | -0.9 / +0.0 | +3.1 / +0.1 |
+| 10Y | -1.3 / -0.1 | -1.2 / -0.1 | -1.3 / -0.0 | -0.1 / -0.1 | +4.3 / +0.2 |
 
-- The second factor improves the fit from 1.85 bp to 1.50 bp. That is a small gain for three extra
-  parameters.
-- **The shape is not identified by this matrix.** The four starts end at RMS errors between 1.50 and
-  1.75 bp with different parameters, a forward-rate correlation anywhere from 0.94 to 0.99,
-  and a bound active every time (κ1, κ2). 4 of the 4 fits stopped at the iteration limit: the objective is flat along a valley.
-- The one-factor residuals have the same signs on every row: too low at the 1Y and 20Y tenors, too high
-  in between. That is a tenor shape one mean reversion cannot produce. The second factor removes part of
-  it at the short expiries and none of it at the long ones.
-- The vol screen is synthetic: it was generated from smooth SABR surfaces, not from a correlation
-  structure. Published calibrations to market data typically find ρ strongly negative; this matrix carries
-  no such information, and the fit says so instead of returning a confident number.
+- **The second factor takes the error from 1.72 bp to 0.12 bp.** One mean reversion can tilt the tenor
+  direction one way; it cannot produce a vol that is as high at 10 years as at 2 years and lower at 20.
+- **The shape is identified, and it is the one the data was built with.** 3 of the 4 starts end at the same
+  point: κ₁ = 37.6%, κ₂ = 3.1%, σ₂/σ₁ = 0.81, ρ = -0.72. The vol screen's ATM levels were
+  generated from a two-factor Gaussian model with a = 40%, b = 3%, η/σ = 0.79, ρ = −0.70
+  (`tools/gen_vol_quotes.py`), through the frozen-weights swap-rate formula and a smooth volatility scale.
+  The calibration uses exact pricing and a piecewise-constant scale, and the remaining 0.12 bp and the
+  small differences in the parameters are the distance between those two descriptions.
+- **Not every start gets there.** From κ₁ 0.1 ρ 0.5 it stops at 1.72 bp with ρ = +0.09. The objective has a second,
+  one-factor-like basin, and Levenberg–Marquardt is a local method. Running several starts is part of the
+  calibration, not a diagnostic.
+- With these parameters the instantaneous correlation between the 1-year and 10-year forward rates is
+  0.55: far from the 1.00 a one-factor model assumes.
+
+This is a recovery test, not a market calibration: the screen is synthetic. What it shows is that the
+calibration finds a two-factor structure when one is there, and says so when it is not (an earlier
+version of the screen, generated from smooth surfaces with no correlation structure behind them, gave
+four different answers from four starts).
 
 ### 9.3 The Bermudan: the same Europeans, a different correlation
 
@@ -451,20 +458,20 @@ are correlated. Prices are Longstaff–Schwartz lower bounds on one million path
 
 | Model | ρ | Corr(1Y, 10Y fwd) | Bermudan (bp) | Switch value (bp) | Strip error (bp) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| One factor, PDE |  | 1.000 | 442.87 | 120.0 | 6.1e-13 |
-| Two-factor code, second factor off |  | 1.000 | 442.82 ± 0.30 | 120.0 | 1.0e-12 |
-| Fast second factor | +0.9 | 0.985 | 473.72 ± 0.31 | 150.9 | 4.0e-13 |
-| Fast second factor | +0.5 | 0.922 | 466.91 ± 0.31 | 144.1 | 4.1e-13 |
-| Fast second factor | +0.0 | 0.837 | 454.82 ± 0.31 | 132.0 | 4.3e-13 |
-| Fast second factor | -0.5 | 0.753 | 434.87 ± 0.30 | 112.0 | 5.5e-13 |
-| Fast second factor | -0.9 | 0.789 | 404.62 ± 0.30 | 81.8 | 8.7e-13 |
-| Shape fitted to the ATM matrix | +0.49 | 0.975 | 441.27 ± 0.30 | 118.4 | 3.1e-13 |
+| One factor, PDE |  | 1.000 | 457.81 | 116.1 | 7.2e-13 |
+| Two-factor code, second factor off |  | 1.000 | 457.81 ± 0.32 | 116.1 | 5.5e-13 |
+| Fast second factor | +0.9 | 0.985 | 490.47 ± 0.33 | 148.8 | 1.1e-12 |
+| Fast second factor | +0.5 | 0.922 | 483.22 ± 0.32 | 141.6 | 6.5e-13 |
+| Fast second factor | +0.0 | 0.837 | 470.41 ± 0.32 | 128.7 | 5.7e-13 |
+| Fast second factor | -0.5 | 0.753 | 449.22 ± 0.32 | 107.6 | 4.7e-13 |
+| Fast second factor | -0.9 | 0.789 | 417.35 ± 0.32 | 75.7 | 8.4e-13 |
+| Shape fitted to the ATM matrix | -0.72 | 0.549 | 435.32 ± 0.33 | 93.7 | 4.3e-13 |
 
 ![g2pp_bermudan.png](img/g2pp_bermudan.png)
 
 - **The pricer is validated where the answer is known.** With the second factor switched off the two-factor
-  Monte Carlo gives 442.82 ± 0.30 bp against the one-factor PDE's 442.87 bp.
-- **Correlation moves the Bermudan by 69 bp** (from 404.6 to 473.7 bp as ρ goes from −0.9 to +0.9)
+  Monte Carlo gives 457.81 ± 0.32 bp against the one-factor PDE's 457.81 bp.
+- **Correlation moves the Bermudan by 73 bp** (from 417.3 to 490.5 bp as ρ goes from −0.9 to +0.9)
   while every calibration instrument stays repriced. That is the same order as the effect of mean reversion
   in section 6, and for the same reason: the Europeans fix the variance of each swap rate on its own
   exercise date and say nothing about how the rates on different dates move together.
@@ -475,13 +482,52 @@ are correlated. Prices are Longstaff–Schwartz lower bounds on one million path
   makes recent shocks count for more than old ones, which is what extra mean reversion does, and the
   switch value rises. Negatively correlated, it offsets recent shocks, acts like negative mean reversion,
   and the value falls below the one-factor price.
-- With the shape fitted to the ATM matrix the Bermudan is 441.3 bp, 1.6 bp from the one-factor price.
-  Given 9.2, that number is one point in a range the calibration set does not narrow. A desk closes it
-  with instruments that see correlation directly: Bermudan quotes, CMS spread options, or a second strip.
+- **With the shape fitted to the ATM matrix the Bermudan is 435.3 bp, 22.5 bp below the one-factor
+  price at κ = 3%.** Given 9.2 this is a calibrated number, not one point in a range. It is also close to
+  what the one-factor model gives once its mean reversion is marked (section 10), which is the same
+  information reaching the price by a cruder route.
 
 Not done: an upper bound for the two-factor price (the duality gap of the one-factor rule in section 5 was
 below one basis point, and the same regression is used here on two states), and risk under the two-factor
 model.
+
+### 9.4 A CMS spread option: the product that prices the correlation
+
+The option pays max(S₁₀ − S₂ − K, 0) in 5 years, where S₁₀ and S₂ are the 10-year and 2-year swap rates
+then. Its value is the variance of the spread, σ₁₀² + σ₂² − 2ρσ₁₀σ₂. The two volatilities are swaption
+vols; the correlation between the two rates is in no swaption price.
+
+Every model below reprices the 5Y×2Y and 5Y×10Y swaptions (81.4 and 81.1 bp) exactly, so they agree on
+both volatilities. The strike is the spread of the two forward rates today, 20.0 bp. Speeds are the
+fitted κ₁ and κ₂; for each ρ the level and σ₂/σ₁ are solved for.
+
+| Model | ρ (factors) | σ₂/σ₁ | Rate correlation | Spread vol (bp) | Price, K − 25 bp | Price, K (bp) | Price, K + 25 bp |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| One factor |  |  | 1.000 | 0.3 | 31.3 | 10.1 | 0.0 |
+| Two factors | -0.97 | 0.35 | 0.427 | 86.9 | 81.7 | 70.0 | 59.4 |
+| Two factors | -0.95 | 0.36 | 0.502 | 81.1 | 77.5 | 65.7 | 55.1 |
+| Two factors | -0.90 | 0.40 | 0.644 | 68.5 | 68.5 | 56.5 | 45.9 |
+| Two factors | -0.85 | 0.44 | 0.746 | 57.9 | 60.9 | 48.7 | 38.1 |
+| Two factors | -0.80 | 0.49 | 0.823 | 48.3 | 54.2 | 41.6 | 31.1 |
+| Two factors | -0.75 | 0.57 | 0.886 | 38.8 | 47.6 | 34.6 | 24.0 |
+| Fitted to the ATM matrix | -0.72 | 0.81 | 0.961 | 22.7 | 37.3 | 22.8 | 12.2 |
+
+- **One factor prices the option at its intrinsic value.** With both vols matched the two rates are
+  perfectly correlated, the spread has 0.3 bp of volatility, and the 10.1 bp that is left is the
+  convexity difference between the two rates, not optionality. The 25 bp out-of-the-money call is
+  worth 0.00 bp.
+- **Two factors move the price from 35 to 70 bp** as ρ goes from -0.75 to -0.97, with both
+  swaptions repriced to 1e-12 bp throughout. The price is a direct reading of the rate correlation,
+  which runs from 0.89 down to 0.43. This is why spread options are what a desk marks ρ to.
+- **The two swaption vols already bound ρ.** For ρ = -0.60, -0.30, +0.00 no σ₂/σ₁ reprices both: with these
+  speeds, a 10-year vol as high as the 2-year one needs strongly negatively correlated factors. The
+  calibration reports that instead of returning a best effort.
+- **The matrix-fitted model gives 22.8 bp**, with a rate correlation of 0.96. It reprices the two
+  swaptions to 0.08 bp, not exactly, and has a time-dependent volatility scale, so it is not on the line
+  of constant-parameter models above. That the ATM matrix alone leaves this much room (23 bp against
+  35–70 bp) is the practical argument for calibrating to a spread option when one is traded.
+
+One payment at expiry with unit accrual, 64 ms per price by two-dimensional quadrature.
 
 ## 10. Marking the mean reversion
 
@@ -493,25 +539,27 @@ re-bootstrapping ζ to the co-terminal strip at every trial value.
 
 | Second strip (expiries 1Y–9Y) | κ | RMS error on it (bp) | Co-terminal strip error (bp) | Bermudan (bp) |
 | --- | ---: | ---: | ---: | ---: |
-| 1Y | 3.48% | 1.84 | 7.5e-13 | 445.03 |
-| 2Y | 2.92% | 1.24 | 8.2e-13 | 442.50 |
+| 1Y | -0.05% | 1.26 | 1.4e-12 | 443.31 |
+| 2Y | -0.71% | 0.63 | 8.7e-13 | 440.14 |
 
 ![kappa_scan.png](img/kappa_scan.png)
 
-- The objective has a clear interior minimum: unlike the two-factor shape of section 9, κ is identified.
-- The two choices of second strip give 3.48% and 2.92%, and Bermudan prices 2.5 bp apart
-  (the reference κ = 3% gives 442.87 bp). That spread is what is left of the 76 bp range of section 6
-  once κ is marked.
+- The objective has a clear interior minimum: κ is identified by either strip.
+- The two choices of second strip give -0.05% and -0.71%, and Bermudan prices 3.2 bp apart.
+  That spread is what is left of the 81 bp range of section 6 once κ is marked.
+- **The reference κ = 3% used in sections 4–8 was a convention, and the market disagrees with it.** Marked,
+  κ is close to zero and the Bermudan is 14.5 bp lower (443.31 against 457.81 bp). The two-factor
+  model fitted to the whole ATM matrix moves the price the same way, and further (section 9.3).
 - One number cannot reprice nine instruments. The errors on the 1Y-tenor strip, by expiry, are
-  +3.0, +0.8, -0.7, -1.5, -2.2, -2.2, -2.3, -1.7, -0.6 bp:
-  positive at the short end and negative in the middle. That pattern is what a time-dependent mean
-  reversion, or a second factor, would be fitted to.
+  -2.7, +1.2, +1.8, +0.9, +0.5, -0.2, -0.6, -0.7, -0.5 bp.
+  They change sign along the strip: a pattern, not noise, and what a time-dependent mean reversion or a
+  second factor would be fitted to.
 
 ## 11. XVA: from exposure to price
 
 Section 8 stopped at one swap's uncollateralised exposure profile. This section prices it: a credit curve,
-a netting set, collateral, a Bermudan, and the sensitivities. The model is the one-factor LGM of section 4
-(κ = 3%, calibrated to the 10-year co-terminal strip). All exposures are discounted expectations of
+a netting set, collateral, a Bermudan, the sensitivities, and the same under two factors. Unless stated the
+model is the one-factor LGM of section 4 (κ = 3%, calibrated to the 10-year co-terminal strip). All exposures are discounted expectations of
 deflated values, so CVA is exposure weighted by default probabilities with no further discounting.
 
 ### 11.1 The credit curve
@@ -538,20 +586,20 @@ the swap on every path, must reproduce it. 10-year payer at 3.50%, 100,000 paths
 
 | Years | EPE, closed form (bp) | EPE, engine (bp) | ENE, closed form (bp) | ENE, engine (bp) |
 | ---: | ---: | ---: | ---: | ---: |
-| 1.01 | 238.2 | 237.9 ± 1.1 | -296.9 | -295.7 |
-| 2.02 | 289.8 | 288.9 ± 1.3 | -331.4 | -331.8 |
-| 3.02 | 322.8 | 322.4 ± 1.3 | -302.5 | -303.4 |
-| 4.02 | 317.6 | 316.8 ± 1.2 | -277.8 | -278.5 |
-| 5.02 | 294.7 | 293.8 ± 1.1 | -245.2 | -247.1 |
-| 6.02 | 258.2 | 257.0 ± 0.9 | -208.3 | -209.6 |
-| 7.02 | 209.4 | 208.4 ± 0.7 | -164.5 | -164.5 |
-| 8.03 | 150.4 | 149.8 ± 0.5 | -115.7 | -115.9 |
-| 9.02 | 81.1 | 80.9 ± 0.3 | -61.4 | -61.6 |
+| 1.01 | 248.7 | 248.3 ± 1.1 | -307.4 | -306.1 |
+| 2.02 | 305.5 | 304.5 ± 1.3 | -347.0 | -347.5 |
+| 3.02 | 341.7 | 341.2 ± 1.4 | -321.4 | -322.3 |
+| 4.02 | 333.9 | 333.1 ± 1.3 | -294.1 | -294.9 |
+| 5.02 | 308.2 | 307.3 ± 1.1 | -258.7 | -260.8 |
+| 6.02 | 264.9 | 263.8 ± 0.9 | -215.0 | -216.4 |
+| 7.02 | 211.6 | 210.6 ± 0.7 | -166.8 | -166.8 |
+| 8.03 | 147.9 | 147.2 ± 0.5 | -113.2 | -113.3 |
+| 9.02 | 77.5 | 77.3 ± 0.2 | -57.8 | -58.0 |
 
 | Method | CVA (bp) | DVA (bp) | FCA (bp) | FBA (bp) |
 | --- | ---: | ---: | ---: | ---: |
-| closed form | 29.55 | 14.54 | 12.80 | 12.04 |
-| Monte Carlo | 29.46 | 14.57 | 12.76 | 12.06 |
+| closed form | 30.62 | 15.10 | 13.28 | 12.52 |
+| Monte Carlo | 30.53 | 15.14 | 13.24 | 12.54 |
 
 CVA is the expected loss if the counterparty defaults while owing us; DVA is the mirror image on our own
 default; FCA and FBA are the cost and benefit of funding the uncollateralised asset and liability at our
@@ -574,30 +622,30 @@ Eight swaps with one counterparty (values today in bp of a unit notional; the bo
 | 8 | 5Y | 3.55 | receive fixed | 0.9 | +103.3 |
 
 Exposure is simulated on 51 dates (quarterly, plus every coupon date) with 50,000 paths; one run takes
-1.9 s.
+1.8 s.
 
 ![xva_book.png](img/xva_book.png)
 
 | Agreement | CVA (bp) | DVA (bp) | FCA (bp) | FBA (bp) |
 | --- | ---: | ---: | ---: | ---: |
-| No netting agreement | 93.91 | — | 43.32 | — |
-| Netted; no collateral | 14.95 | 2.77 | 6.57 | 2.01 |
-| Zero threshold; 10-day margin period | 0.89 | 0.58 | 0.38 | 0.44 |
-| Threshold 50 bp of notional | 3.89 | 0.88 | 1.81 | 0.64 |
+| No netting agreement | 97.48 | — | 44.98 | — |
+| Netted; no collateral | 15.17 | 2.88 | 6.66 | 2.09 |
+| Zero threshold; 10-day margin period | 0.88 | 0.58 | 0.38 | 0.45 |
+| Threshold 50 bp of notional | 3.88 | 0.89 | 1.80 | 0.65 |
 | Minimum transfer 10 bp | 0.89 | 0.58 | 0.38 | 0.45 |
-| Zero threshold; 20-day margin period | 1.15 | 0.72 | 0.49 | 0.56 |
+| Zero threshold; 20-day margin period | 1.14 | 0.72 | 0.50 | 0.56 |
 
-- **Netting cuts CVA from 93.9 to 14.9 bp**, a factor of 6.3. Without a netting agreement each trade is a
+- **Netting cuts CVA from 97.5 to 15.2 bp**, a factor of 6.4. Without a netting agreement each trade is a
   separate claim and the offsetting payers and receivers both count; with one, only the net does.
-- **Collateral with a zero threshold cuts it again to 0.89 bp, and not to zero.** What is left is the
+- **Collateral with a zero threshold cuts it again to 0.88 bp, and not to zero.** What is left is the
   move of the book over the 10-day margin period of risk, during which no more collateral arrives.
-  Doubling the period raises CVA by a factor of 1.30. A pure diffusion would give √2 = 1.41; the rest is
+  Doubling the period raises CVA by a factor of 1.29. A pure diffusion would give √2 = 1.41; the rest is
   the coupon effect below, which does not scale with the period.
-- **A threshold is uncollateralised exposure by design:** 50 bp of notional leaves 3.89 bp of CVA.
-- **A minimum transfer amount barely matters** (0.89 against 0.89 bp). A call that is not made leaves a
+- **A threshold is uncollateralised exposure by design:** 50 bp of notional leaves 3.88 bp of CVA.
+- **A minimum transfer amount barely matters** (0.89 against 0.88 bp). A call that is not made leaves a
   small value uncollateralised in both directions, so to first order it adds as much as it removes.
 - **Collateralised exposure spikes on coupon dates.** Away from them the residual exposure averages
-  4.9 bp; on them, 17.7 bp. When a coupon rolls off, the book's value jumps by the net
+  4.8 bp; on them, 18.2 bp. When a coupon rolls off, the book's value jumps by the net
   coupon while the collateral held was called on the value before it. This is the part of collateralised
   exposure a diffusion-only argument misses.
 
@@ -608,34 +656,35 @@ still an option, worth the larger of exercise and continuation, or it has been e
 owns the remaining swap. The continuation value is computed as a function of the state at every exercise
 date by backward induction with exact Gaussian transitions, and paths are then exercised optimally.
 
-The same simulation reproduces the price: 442.87 bp from the grid and 441.09 ± 0.89 bp from the
-paths, against 442.87 bp from the PDE of section 5.
+The same simulation reproduces the price: 457.81 bp from the grid and 455.83 ± 0.94 bp from the
+paths, against 457.81 bp from the PDE of section 5.
 
 | Years | EPE (bp) | of which option | of which swap | ENE (bp) | Exercised by then | Underlying swap's EPE (bp) |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 0.00 | 442.9 ± 0.0 | 442.9 | 0.0 | 0.0 | 0% | 0.0 |
-| 1.01 | 442.3 ± 0.6 | 326.8 | 115.5 | 0.0 | 11% | 238.2 |
-| 2.02 | 425.6 ± 0.8 | 227.0 | 198.7 | -1.2 | 22% | 289.8 |
-| 3.02 | 407.2 ± 0.8 | 137.0 | 270.1 | -3.2 | 34% | 322.8 |
-| 4.02 | 371.2 ± 0.8 | 83.2 | 287.9 | -6.7 | 44% | 317.6 |
-| 5.02 | 327.1 ± 0.7 | 48.3 | 278.8 | -10.6 | 51% | 294.7 |
-| 6.02 | 275.5 ± 0.6 | 24.7 | 250.8 | -14.4 | 58% | 258.2 |
-| 7.02 | 217.3 ± 0.5 | 11.0 | 206.4 | -16.8 | 65% | 209.4 |
-| 8.03 | 152.6 ± 0.3 | 3.0 | 149.6 | -16.5 | 71% | 150.4 |
-| 9.02 | 80.7 ± 0.2 | 0.0 | 80.7 | -11.5 | 76% | 81.1 |
+| 0.00 | 457.8 ± 0.0 | 457.8 | 0.0 | 0.0 | 0% | 0.0 |
+| 1.01 | 457.2 ± 0.6 | 336.9 | 120.3 | 0.0 | 11% | 248.7 |
+| 2.02 | 439.9 ± 0.8 | 228.3 | 211.6 | -1.4 | 23% | 305.5 |
+| 3.02 | 420.0 ± 0.9 | 129.6 | 290.4 | -3.8 | 36% | 341.7 |
+| 4.02 | 381.0 ± 0.8 | 74.7 | 306.3 | -7.5 | 45% | 333.9 |
+| 5.02 | 334.0 ± 0.8 | 39.3 | 294.7 | -11.7 | 53% | 308.2 |
+| 6.02 | 278.0 ± 0.6 | 19.3 | 258.8 | -14.4 | 59% | 264.9 |
+| 7.02 | 216.8 ± 0.5 | 7.5 | 209.3 | -15.9 | 65% | 211.6 |
+| 8.03 | 149.2 ± 0.3 | 2.0 | 147.2 | -13.9 | 70% | 147.9 |
+| 9.02 | 77.2 ± 0.2 | 0.0 | 77.2 | -8.9 | 75% | 77.5 |
 
 ![xva_bermudan.png](img/xva_bermudan.png)
 
-- **Before the first exercise date the exposure is the option's price**, 443 bp, far above the
+- **Before the first exercise date the exposure is the option's price**, 458 bp, far above the
   underlying swap's exposure at the same dates. The option is an asset on every path; the swap is one on
   about half of them.
-- **Exercise replaces option exposure with swap exposure.** By year 5, 51% of paths have exercised
-  and 85% of the exposure is the swap's. At the last date the two profiles meet: the option is gone.
+- **Exercise replaces option exposure with swap exposure.** By year 5, 88% of the exposure is the swap's
+  (53% of paths have exercised; that frequency is under the model's pricing measure, not a real-world
+  probability). At the last date the two profiles meet: the option is gone.
 - **Negative exposure appears only after exercise**, on paths where rates fell after the holder entered
-  the swap: -11.5 bp at the end, against the swap's own which is several times larger. The
+  the swap: -8.9 bp at the end, against the swap's own which is several times larger. The
   holder chose when to enter.
-- **CVA of the Bermudan is 37.7 bp against 29.5 bp for the swap**, and its DVA is 0.6 bp against
-  14.5 bp. Buying the option is taking more credit risk on the counterparty and giving them
+- **CVA of the Bermudan is 38.5 bp against 30.6 bp for the swap**, and its DVA is 0.6 bp against
+  15.1 bp. Buying the option is taking more credit risk on the counterparty and giving them
   almost none in return.
 
 Physical settlement is assumed. A cash-settled Bermudan has no exposure after exercise.
@@ -647,13 +696,13 @@ not change, so this costs nothing.
 
 | Quote | Swap CVA (bp per bp) | Book CVA (bp per bp) |
 | --- | ---: | ---: |
-| CDS-1Y | -0.0176 | -0.0042 |
-| CDS-3Y | -0.0183 | -0.0078 |
-| CDS-5Y | +0.0135 | +0.0075 |
-| CDS-7Y | +0.0951 | +0.0238 |
-| CDS-10Y | +0.1022 | +0.0698 |
+| CDS-1Y | -0.0186 | -0.0043 |
+| CDS-3Y | -0.0192 | -0.0092 |
+| CDS-5Y | +0.0174 | +0.0087 |
+| CDS-7Y | +0.1012 | +0.0259 |
+| CDS-10Y | +0.1012 | +0.0691 |
 
-Parallel: +0.175 and +0.089. The short-maturity entries are negative. Raising the 1-year spread alone
+Parallel: +0.182 and +0.090. The short-maturity entries are negative. Raising the 1-year spread alone
 moves default probability from later years, where the exposure is, to the first year, where there is
 little. A CVA hedge with a single CDS maturity would get this wrong.
 
@@ -664,30 +713,79 @@ coefficients: one tape sweep and one transposed solve with the bootstrap Jacobia
 
 | Quote (largest six) | Adjoint | Bump, model fixed | Bump, re-calibrated |
 | --- | ---: | ---: | ---: |
-| SOFR-OIS-5Y | -0.0386 | -0.0385 | -0.0367 |
-| SOFR-OIS-6Y | -0.0480 | -0.0478 | -0.0462 |
-| SOFR-OIS-7Y | -0.0530 | -0.0527 | -0.0521 |
-| SOFR-OIS-8Y | -0.0572 | -0.0567 | -0.0574 |
-| SOFR-OIS-9Y | -0.0307 | -0.0303 | -0.0342 |
-| SOFR-OIS-10Y | +0.5190 | +0.5229 | +0.5080 |
-| **All 37 quotes** | **+0.2265** | **+0.2320** | **+0.2209** |
+| SOFR-OIS-5Y | -0.0386 | -0.0385 | -0.0364 |
+| SOFR-OIS-6Y | -0.0479 | -0.0477 | -0.0460 |
+| SOFR-OIS-7Y | -0.0529 | -0.0527 | -0.0521 |
+| SOFR-OIS-8Y | -0.0572 | -0.0568 | -0.0578 |
+| SOFR-OIS-9Y | -0.0309 | -0.0303 | -0.0347 |
+| SOFR-OIS-10Y | +0.5185 | +0.5224 | +0.5068 |
+| **All 37 quotes** | **+0.2260** | **+0.2314** | **+0.2195** |
 
 |  | Time (ms) | Relative |
 | --- | ---: | ---: |
-| One CVA | 1.18 | 1× |
-| Delta, adjoint | 1.97 | 1.7× |
-| Delta, bump with the model fixed | 278 | 235× |
-| Delta, bump and re-calibrate | 844 | 713× |
+| One CVA | 1.35 | 1× |
+| Delta, adjoint | 2.28 | 1.7× |
+| Delta, bump with the model fixed | 323 | 239× |
+| Delta, bump and re-calibrate | 893 | 662× |
 
 - The adjoint ladder is the exact derivative: the tests match it to a small central bump to 2e-10. The
   bumps in the table are one-sided 1 bp shifts and differ from it by their convexity, at most 4e-03 bp per bp.
 - The adjoint costs the time of 1.7 CVA evaluations. Bumping needs 37 curve rebuilds and revaluations:
-  **about 141× slower**.
-- **Which delta is a choice.** Bumping with the model's variance held fixed gives +0.232 bp per bp in total;
-  re-calibrating to the same normal vols after each bump gives +0.221, 5% less, and the buckets move by
+  **about 142× slower**.
+- **Which delta is a choice.** Bumping with the model's variance held fixed gives +0.231 bp per bp in total;
+  re-calibrating to the same normal vols after each bump gives +0.220, 5% less, and the buckets move by
   more than the total. The first is the delta of a desk that hedges vega separately; the second folds
   part of the vega into the delta. Neither is wrong, but they are not the same hedge.
 
+### 11.6 Two factors: what the correlation does to exposure
+
+The engine also runs under the two-factor model of section 9. The shape (speeds, σ₂/σ₁) is the one fitted to
+the ATM matrix; the level is bootstrapped to the same 10-year co-terminal strip as the one-factor model, for
+each ρ. So every model below prices the nine swaptions that make up the 10-year swap's exposure identically.
+
+| Model | ρ | 10Y swap CVA (bp) | Book CVA, netted (bp) | Book CVA, no netting (bp) | Book DVA (bp) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| One factor |  | 30.52 | 15.17 | 97.5 | 2.88 |
+| Two factors | +0.50 | 30.45 | 15.00 | 102.6 | 2.89 |
+| Two factors | +0.00 | 30.61 | 15.05 | 100.6 | 2.92 |
+| Two factors | -0.50 | 30.75 | 15.21 | 97.0 | 3.00 |
+| Two factors | -0.90 | 30.75 | 15.55 | 90.7 | 3.15 |
+| Two factors; fitted shape | -0.72 | 30.77 | 15.36 | 94.3 | 3.07 |
+
+- **The 10-year swap's CVA does not move** (30.5–30.8 bp, within simulation error): its exposure on
+  each coupon date is a swaption in the calibration set. This is the two-factor engine's check against a
+  known answer, alongside the test that it reproduces the two-factor swaption strip.
+- **The book's does, modestly:** netted CVA 15.0–15.6 bp and gross 91–103 bp across ρ. Swaps of
+  2 to 7 years are not in the calibration set, and how a 2-year receiver offsets a 10-year payer depends
+  on how the two ends of the curve move together.
+- The netted number moves less than the gross one. This book is roughly balanced in each maturity, so most
+  of what the correlation changes nets out. A book that is long one end of the curve and short the other
+  is where it would matter (the engine tests include one: its exposure changes by more than a quarter
+  between ρ = −0.9 and +0.5).
+
+**The Bermudan under two factors.** With two states the continuation value is estimated by regression
+rather than on a grid: an in-the-money fit decides exercise, and a fit on all paths gives the option's value
+where it is out of the money. With the second factor off this reproduces the one-factor grid profile of
+11.4, which is tested.
+
+| Years | EPE, two factors (bp) | of which option | ENE (bp) | EPE, one factor (bp) | of which option | ENE (bp) |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.00 | 435.7 ± 0.0 | 435.7 | 0.0 | 457.8 | 457.8 | 0.0 |
+| 1.01 | 436.3 ± 0.6 | 326.7 | 0.0 | 457.2 | 336.9 | 0.0 |
+| 2.02 | 422.8 ± 0.7 | 227.5 | -1.3 | 439.9 | 228.3 | -1.4 |
+| 3.02 | 406.9 ± 0.8 | 120.4 | -3.5 | 420.0 | 129.6 | -3.8 |
+| 4.02 | 373.6 ± 0.8 | 68.7 | -6.5 | 381.0 | 74.7 | -7.5 |
+| 5.02 | 331.0 ± 0.7 | 36.9 | -10.0 | 334.0 | 39.3 | -11.7 |
+| 6.02 | 277.9 ± 0.6 | 19.2 | -12.2 | 278.0 | 19.3 | -14.4 |
+| 7.02 | 217.9 ± 0.5 | 8.2 | -13.2 | 216.8 | 7.5 | -15.9 |
+| 8.03 | 150.3 ± 0.3 | 2.8 | -11.5 | 149.2 | 2.0 | -13.9 |
+| 9.02 | 77.6 ± 0.2 | 0.0 | -7.4 | 77.2 | 0.0 | -8.9 |
+
+Under the fitted two-factor model the Bermudan is worth 435.7 ± 0.8 bp (section 9.3) and its CVA is
+37.7 bp, against 38.5 bp in the one-factor model at κ = 3%. The exposure is lower at the start, where it is
+the option's price, and the same at the end, where it is the remaining swap's and both models reprice the
+same swaptions.
+
 Not modelled: wrong-way risk (default and exposure are independent), initial margin, bilateral survival
-weighting, more than one currency, a second factor in the exposure engine. The engine values a floating
-coupon in progress at the term rate fixed at its period start.
+weighting, more than one currency. The engine values a floating coupon in progress at the term rate fixed
+at its period start.
