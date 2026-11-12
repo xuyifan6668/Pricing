@@ -11,7 +11,7 @@ The LGM one-factor and G2++ two-factor models, European swaptions under them, an
 | The USD market used everywhere: bootstrapped curves + fitted cube | `usd_market.hpp` |
 | G2++: covariance of the two states, deflated bond, forward-rate correlation | `g2pp.hpp` |
 | Swaption price under G2++: closed form in one direction, quadrature in the other | `g2pp_swaption.hpp` |
-| G2++ shape from the ATM matrix; volatility scale bootstrapped to a strip | `g2pp_calibration.hpp` |
+| G2++ shape from the ATM matrix; scale bootstrapped to a strip; two swaptions matched at a given ρ | `g2pp_calibration.hpp` |
 
 ## The model in four lines
 

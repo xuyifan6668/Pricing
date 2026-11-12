@@ -16,28 +16,31 @@ calibrated to its nine co-terminal swaptions. Prices in basis points of notional
 
 | Trade | Best European | Lower bound (LSMC) | PDE | Upper bound (Andersen–Broadie) | Duality gap |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Payer 2.50% (ITM) | 738.8 | 851.60 ± 0.14 | 851.42 | 852.33 ± 0.17 | 0.73 ± 0.08 |
-| Payer 3.50% (near ATM) | 322.8 | 442.91 ± 0.11 | 442.88 | 443.35 ± 0.12 | 0.43 ± 0.05 |
-| Payer 4.50% (OTM) | 144.6 | 222.99 ± 0.10 | 222.98 | 223.17 ± 0.11 | 0.18 ± 0.03 |
-| Receiver 3.50% | 331.4 | 431.74 ± 0.16 | 431.91 | 432.29 ± 0.18 | 0.55 ± 0.07 |
+| Payer 2.50% (ITM) | 744.3 | 864.05 ± 0.15 | 863.86 | 864.55 ± 0.16 | 0.50 ± 0.06 |
+| Payer 3.50% (near ATM) | 341.7 | 457.83 ± 0.12 | 457.81 | 458.29 ± 0.13 | 0.46 ± 0.06 |
+| Payer 4.50% (OTM) | 157.5 | 233.46 ± 0.11 | 233.50 | 233.68 ± 0.12 | 0.22 ± 0.04 |
+| Receiver 3.50% | 347.0 | 447.47 ± 0.17 | 447.66 | 447.97 ± 0.18 | 0.50 ± 0.07 |
 
 The PDE lies within two standard errors of both Monte Carlo bounds on every trade, and is confirmed to
 0.001 bp by a fourth, independent method. The duality gap is about 0.1% of the price. PDE: 2 ms per price.
 
 | | Result |
 | --- | --- |
-| Curve bootstrap | 37 instruments, two coupled curves, repriced to 1e-10 bp in 4 Newton iterations (4 ms). A sequential bootstrap leaves 5 bp. |
-| Swap risk by AAD | Delta of a 200-swap book to all 37 curve quotes in 2.2 ms: **about 85× faster** than bump-and-rebuild, agreeing to 1e-5. |
-| Swaption cube | 81 SABR nodes fitted to 0.016 bp (the rounding of the quotes); the arbitrageable strikes of each node located. |
+| Curve bootstrap | 37 instruments, two coupled curves, repriced to 1e-10 bp in 4 Newton iterations (5 ms). A sequential bootstrap leaves 5 bp. |
+| Swap risk by AAD | Delta of a 200-swap book to all 37 curve quotes in 1.6 ms: **about 80× faster** than bump-and-rebuild, agreeing to 1e-5. |
+| Swaption cube | 81 SABR nodes fitted to 0.013 bp (the rounding of the quotes); the arbitrageable strikes of each node located. |
 | LGM calibration | Co-terminal strip repriced to 1e-12 bp of vol, for any mean reversion. |
-| Mean reversion | Moves the Bermudan by 76 bp (κ from −2% to 15%) while every calibration instrument stays repriced. |
+| Mean reversion | Moves the Bermudan by 81 bp (κ from −2% to 15%) while every calibration instrument stays repriced. |
 | Exposure | A swap's expected exposure profile from the same model equals the market swaption strip; Monte Carlo agrees. |
-| Second factor (G2++) | Factor correlation moves the Bermudan by 69 bp (ρ from −0.9 to +0.9) while all nine Europeans stay repriced; with the second factor off the two-factor Monte Carlo reproduces the one-factor PDE. |
-| Mean reversion | Marked to a second strip of swaptions: 3.5% or 2.9% depending on its tenor, 2.5 bp apart on the Bermudan, against a 76 bp range unmarked. |
-| CVA of a swap | Closed form (a strip of swaptions) 29.55 bp; the Monte Carlo exposure engine 29.46 bp. |
-| Netting and collateral | CVA of an eight-swap book: 93.9 bp with no netting, 14.9 bp netted, 0.89 bp with a zero-threshold CSA. What is left is the margin period of risk and the coupon dates. |
-| Bermudan exposure | Exposure starts at the option's price and turns into swap exposure as paths exercise. CVA 37.7 bp against 29.5 bp for the underlying swap; DVA 0.6 bp against 14.5 bp. |
+| Second factor (G2++) | Factor correlation moves the Bermudan by 73 bp (ρ from −0.9 to +0.9) while all nine Europeans stay repriced; with the second factor off the two-factor Monte Carlo reproduces the one-factor PDE. |
+| G2++ calibration | Fitted to 30 ATM swaptions: 0.12 bp RMS against 1.72 bp for one factor. Three of four starts recover the shape the vol screen was generated with (ρ −0.72 against −0.70). |
+| CMS spread option | 10Y − 2Y, 5-year expiry, both swaption vols matched: 10 bp under one factor (intrinsic), 35 to 70 bp under two as ρ goes from −0.75 to −0.97. The two vols alone rule out ρ above about −0.7. |
+| Mean reversion | Marked to a second strip of swaptions: −0.05% or −0.71% depending on its tenor, 3.2 bp apart on the Bermudan, against an 81 bp range unmarked. |
+| CVA of a swap | Closed form (a strip of swaptions) 30.62 bp; the Monte Carlo exposure engine 30.53 bp. |
+| Netting and collateral | CVA of an eight-swap book: 97.5 bp with no netting, 15.2 bp netted, 0.88 bp with a zero-threshold CSA. What is left is the margin period of risk and the coupon dates. |
+| Bermudan exposure | Exposure starts at the option's price and turns into swap exposure as paths exercise. CVA 38.5 bp against 30.6 bp for the underlying swap; DVA 0.6 bp against 15.1 bp. |
 | CVA risk by adjoint | Delta of a swap's CVA to all 37 curve quotes in 2 ms: **about 140× faster** than bumping, exact to 2e-10. |
+| Two-factor exposure | The 10-year swap's CVA is the same under every factor correlation (30.5–30.8 bp: its swaptions are the calibration set); the book's netted CVA moves 15.0–15.6 bp and its gross CVA 91–103 bp. |
 
 ![Bermudan behaviour](docs/img/bermudan_behaviour.png)
 
@@ -50,6 +53,7 @@ The PDE lies within two standard errors of both Monte Carlo bounds on every trad
 | Bermudan swaption | The Europeans it contains, plus how correlated rates are across exercise dates (mean reversion) | Crank–Nicolson PDE; Longstaff–Schwartz lower bound; Andersen–Broadie upper bound | ≥ every European, ≤ their sum; monotone in exercise rights; one date = the European; lower ≤ PDE ≤ upper |
 | Swap exposure (EE, PFE) | The same swaption strip | Closed form under LGM; Monte Carlo | Closed form = Monte Carlo; EE(payer) + ENE(receiver) = 0 |
 | CVA / DVA / FVA of a netting set | Net exposure after netting and collateral, the counterparty's default probabilities, the funding spread | Monte Carlo revaluation of every trade on every path; credit curve bootstrapped from CDS | One swap = closed form; offsetting trades net to zero; a tighter CSA leaves less; CVA mirror = DVA |
+| CMS spread option | The correlation between two swap rates, which no swaption prices | Two-dimensional quadrature under G2++ | Call − put = forward; a rate against itself is worth nothing; Monte Carlo agrees; price falls as correlation rises |
 | Bermudan exposure | Whether it has been exercised yet, and into what | Continuation values by backward induction, forward simulation under the optimal rule | Reproduces the PDE price; one date = the European; deep in the money = the swap |
 
 | Model | Role | Where it stops being right (and where that is shown) |
@@ -57,7 +61,7 @@ The PDE lies within two standard errors of both Monte Carlo bounds on every trad
 | Multi-curve bootstrap | Turns quotes into discount and forward curves | Interpolation choice changes forwards between pillars; futures convexity is an input, not modelled |
 | SABR (Hagan expansion) | The smile at each cube node | Negative density at low strikes: a perfect fit is not an arbitrage-free smile |
 | LGM one-factor | Dynamics for the Bermudan | One factor: all rates perfectly correlated instantaneously; no smile of its own; mean reversion is not identified by the calibration set |
-| G2++ two-factor | The same Bermudan with rates allowed to decorrelate | Its shape (two speeds, volatility ratio, correlation) is not identified by the ATM matrix used here; no smile; Monte Carlo lower bound only |
+| G2++ two-factor | The same Bermudan with rates allowed to decorrelate; CMS spread options; exposure | Levenberg–Marquardt can stop in a one-factor-like basin, so several starts are needed; the ATM matrix leaves the rate correlation loosely pinned compared with a spread option; no smile; Monte Carlo lower bound only for the Bermudan |
 
 ## Things I measured that were not what the textbook says
 
@@ -66,7 +70,7 @@ The PDE lies within two standard errors of both Monte Carlo bounds on every trad
   price plain Crank–Nicolson is the more accurate at every step count I tried. What the start-up buys is a
   smooth gamma. It stays on by default because the output is hedged.
 - **PDE error is second order but not monotone.** It depends on where the exercise boundary falls between
-  grid nodes; one doubling of the grid can do nothing and the next cut the error sixteen-fold.
+  grid nodes; one doubling of the grid can do nothing and the next cut the error fifty-fold.
 - **The 30-year SOFR risk of a swap is not on a SOFR instrument.** There is no 30-year SOFR swap in the
   curve; the point is defined by a Fed Funds swap and a basis swap, and that is where the delta lands.
 - **A control variate on the best European did little for the lower bound** (12% on top of antithetic
@@ -87,7 +91,8 @@ cpp/linear       pricing off the curves: leg PV, par rate, annuity
 cpp/bootstrap    global multi-curve solve, adjoint Jacobian, par risk
 cpp/vol          Bachelier / Black, SABR and its calibration, arbitrage check
 cpp/models       LGM one-factor and G2++ two-factor, swaption pricing under them, calibration
-cpp/pricers      Bermudan by PDE / LSMC / Andersen–Broadie, Bermudan under G2++, exposure, risk ladders
+cpp/pricers      Bermudan by PDE / LSMC / Andersen–Broadie, Bermudan and CMS spread under G2++,
+                 exposure, risk ladders
 cpp/xva          credit curve from CDS, exposure engine (netting, collateral), CVA / DVA / FVA,
                  Bermudan exposure, CVA sensitivities
 cpp/examples     rl_analysis (every number in docs/RESULTS.md) and small demos
@@ -96,7 +101,7 @@ notebooks        seven walk-throughs of the curve and vol layers
 docs             RESULTS.md, DESIGN.md
 ```
 
-Each `cpp/` module depends only on the ones above it. About 380 C++ test cases and 59 Python tests; the
+Each `cpp/` module depends only on the ones above it. About 400 C++ test cases and 59 Python tests; the
 C++ suite also runs under AddressSanitizer and UBSan.
 
 ## Build and run
@@ -130,11 +135,13 @@ uv run python tools/make_results.py
 ## Limitations
 
 - **Market data is synthetic.** The curve quotes and the vol screen are realistic in shape and level but
-  are not vendor data, and the cube's forwards come from the vol file rather than from the curve.
-- **Two factors, partly.** G2++ prices European and Bermudan swaptions; the PDE, the upper bound, risk and
-  exposure are one-factor only. Its shape is fitted to the ATM matrix, which on this data does not
-  identify it (RESULTS §9.2); a desk marks it to Bermudan prices, CMS spread options or a second strip.
-  Mean reversion in the one-factor model can be marked to a second strip (RESULTS §10).
+  are not vendor data. The ATM vols are generated from a documented two-factor model, so the two-factor
+  calibration is a recovery test, not a market fit. The cube's forwards come from the vol file rather
+  than from the curve.
+- **Two factors, partly.** G2++ prices European, Bermudan and CMS spread options and drives the exposure
+  engine; the PDE, the upper bound and risk are one-factor only. The spread option is one payment with
+  unit accrual, not a traded strip. Mean reversion in the one-factor model can be marked to a second
+  strip (RESULTS §10).
 - **No smile in the model.** Both models are calibrated at the trade's strike. A Bermudan whose exercise boundary
   sits far from the strike sees vols the model was not calibrated to.
 - **SABR is Hagan's expansion as published.** Arbitrage at low strikes is detected and reported per node,
@@ -143,8 +150,9 @@ uv run python tools/make_results.py
 - **Single-curve in the model.** The LGM pricers handle SOFR swaps under SOFR discounting; the two-day
   payment lag is frozen at today's curve.
 - **Bermudan risk is by bump and re-calibration**, not adjoint. AAD covers the curve layer.
-- **XVA is one-factor, single-currency, swaps and one Bermudan.** No wrong-way risk (default and exposure
-  are independent), no initial margin, unilateral CVA and DVA. The credit spreads are illustrative. The
+- **XVA is single-currency, swaps and one Bermudan.** No wrong-way risk (default and exposure are
+  independent), no initial margin, unilateral CVA and DVA. The credit spreads are illustrative. The
   engine values a floating coupon in progress at the term rate fixed at its period start, which is exact
-  on coupon dates. The adjoint CVA delta covers one swap, not the netting set.
+  on coupon dates. The adjoint CVA delta covers one swap under one factor, not the netting set. The
+  two-factor Bermudan exposure is regression-based.
 - USD only; no cross-currency.

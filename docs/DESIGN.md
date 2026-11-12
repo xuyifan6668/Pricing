@@ -97,6 +97,14 @@ Gaussian transitions, which also gives the price to 0.001 bp of the PDE.
 factors only; re-calibrating after each bump gives a ladder about 5% different in total. Both are in
 RESULTS §11.5 because the difference is a hedging decision, not a numerical error.
 
+**The vol screen is generated from a two-factor model, and the calibration is judged on recovering it.**
+The first screen came from smooth surfaces with no correlation structure, and the two-factor fit returned
+four different answers from four starts: correct behaviour, and nothing to learn from. The ATM levels are
+now implied by a documented two-factor Gaussian model through the frozen-weights formula; the exact
+calibration recovers its parameters to within the difference between the two formulas. *Rejected:*
+generating the screen with the library's own pricer, which would make the recovery exact and the test
+circular.
+
 ## What was deliberately left out
 
 Python bindings, an Excel add-in, a parallel risk engine, a generic product/model registry, payoff

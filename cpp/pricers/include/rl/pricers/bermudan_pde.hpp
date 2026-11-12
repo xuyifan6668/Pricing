@@ -27,7 +27,7 @@
 //
 // Space error is second order on average but not monotone in the step: it depends on where the
 // exercise boundary falls between grid nodes, so refining can leave the error unchanged before the
-// next refinement cuts it by sixteen. Convergence is therefore judged over several doublings.
+// next refinement cuts it fifty-fold. Convergence is therefore judged over several doublings.
 
 #include "rl/pricers/bermudan.hpp"
 

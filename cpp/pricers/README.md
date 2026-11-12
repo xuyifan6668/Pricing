@@ -8,6 +8,7 @@ The Bermudan swaption priced three ways under LGM, swap exposure, and risk.
 | Crank–Nicolson finite differences, optional Rannacher start-up, exercise boundary | `bermudan_pde.hpp` |
 | Longstaff–Schwartz lower bound; Andersen–Broadie upper bound | `bermudan_mc.hpp` |
 | The Bermudan under G2++: exact two-state simulation, regression on both states | `bermudan_g2pp.hpp` |
+| CMS spread option under G2++: quadrature, with the two rates' vols and correlation | `cms_spread.hpp` |
 | Swap exposure profile: EE (closed form and Monte Carlo), PFE, ENE | `exposure.hpp` |
 | Par-quote delta by adjoint and by bump; Bermudan vega by calibration instrument | `risk.hpp` |
 
@@ -20,9 +21,10 @@ in any pricer.
 - Lower bound ≤ PDE ≤ upper bound on every trade, duality gap 0.2–0.7 bp of notional.
 - PDE: second order, 2 ms at 400 × 400, confirmed to 0.001 bp by exact-transition integration.
 - Rannacher start-up: smoother gamma, slightly worse price. Both are measured and tested.
-- Switch value rises from 98 to 174 bp as mean reversion goes from −2% to 15%.
-- Under G2++ (§9) factor correlation moves the price by 69 bp with every European repriced; with the
+- Switch value rises from 92 to 173 bp as mean reversion goes from −2% to 15%.
+- Under G2++ (§9) factor correlation moves the price by 73 bp with every European repriced; with the
   second factor off the two-factor Monte Carlo reproduces the PDE.
+- CMS spread option (§9.4), both swaption vols matched: 10 bp under one factor, 35–70 bp under two.
 
 ## Tested
 

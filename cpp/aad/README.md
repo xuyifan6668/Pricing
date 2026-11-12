@@ -14,7 +14,7 @@ Tape-based adjoint algorithmic differentiation: the active scalar `Real` and its
   derivatives cross a solve by the implicit-function theorem (see `bootstrap`).
 
 Used for: the bootstrap Jacobian (`bootstrap::dFdz`) and swap par-quote risk
-(`pricers::swapParDeltaAdjoint`), about 85× faster than bumping on a 200-swap book.
+(`pricers::swapParDeltaAdjoint`), about 80× faster than bumping on a 200-swap book.
 
 Tests: every operator's adjoint against central differences; a 1000-input gradient from one sweep;
 identical values under `double` and `Real`.
