@@ -55,3 +55,25 @@ def run_demo(name: str, *args: object, build_dir: Path | None = None) -> pd.Data
     stubs are still unimplemented — that is the notebook's signal that there is work left to do.
     """
     return pd.read_csv(io.StringIO(run_demo_text(name, *args, build_dir=build_dir)))
+
+
+def run_analysis(*sections: str, refresh: bool = False, build_dir: Path | None = None) -> dict[str, pd.DataFrame]:
+    """Run sections of `rl_analysis` (the executable behind docs/RESULTS.md) and return every table it wrote.
+
+    The tables are CSV files, one per result; they are returned as DataFrames keyed by file name without
+    the extension. Results are kept under <build>/notebook-results/<sections> and reused unless
+    `refresh` is set, because some sections take tens of seconds.
+    """
+    if not sections:
+        raise ValueError("name at least one section, e.g. run_analysis('xva')")
+    build_dir = build_dir or find_build_dir()
+    out = build_dir / "notebook-results" / "-".join(sections)
+    if refresh or not any(out.glob("*.csv")):
+        out.mkdir(parents=True, exist_ok=True)
+        exe = demo_path("rl_analysis", build_dir)
+        env = dict(os.environ)
+        env.setdefault("RL_DATA_DIR", str(repo_root() / "data"))
+        proc = subprocess.run([str(exe), str(out), *sections], capture_output=True, text=True, env=env)
+        if proc.returncode != 0:
+            raise RuntimeError(f"rl_analysis failed (exit {proc.returncode}): {proc.stderr.strip()}")
+    return {f.stem: pd.read_csv(f) for f in sorted(out.glob("*.csv"))}

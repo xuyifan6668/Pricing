@@ -7,4 +7,4 @@ for p in (_ROOT / "python", _ROOT / "tools"):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from ratelib.demos import find_build_dir, run_demo  # noqa: E402,F401
+from ratelib.demos import find_build_dir, run_analysis, run_demo  # noqa: E402,F401
