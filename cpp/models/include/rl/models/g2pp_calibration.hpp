@@ -91,4 +91,19 @@ struct G2ppStripCalibration {
 /// expiry order. Throws InputError on an empty or unordered strip.
 G2ppStripCalibration calibrateG2ppToStrip(const G2pp& shape, const std::vector<CalibrationInstrument>& strip);
 
+/// A constant-parameter model that reprices TWO swaptions exactly, for given mean reversions and
+/// correlation: the overall volatility and the ratio σ_2/σ_1 are solved for. With the two swaptions
+/// on the two rates of a spread product, models built this way for different ρ agree on both rates'
+/// volatilities and differ only in their correlation.
+///
+/// Not every (κ_1, κ_2, ρ) can do it: the ratio moves the two vols relative to each other only so
+/// far, so the pair of vols itself restricts ρ. Throws CalibrationError when no ratio in
+/// [ratioMin, ratioMax] works. When more than one does, the one closest to `preferredRatio` is returned.
+G2pp calibrateG2ppToPair(double kappa1, double kappa2, double rho, const CalibrationInstrument& first, const CalibrationInstrument& second,
+                         double preferredRatio = 1.0, double ratioMin = 0.05, double ratioMax = 20.0);
+
+/// The one-factor counterpart: mean reversion and volatility solved for the same two swaptions.
+/// Throws CalibrationError if no mean reversion in [kappaMin, kappaMax] gives the pair.
+G2pp calibrateOneFactorToPair(const CalibrationInstrument& first, const CalibrationInstrument& second, double kappaMin = -0.05, double kappaMax = 1.0);
+
 } // namespace rl::models

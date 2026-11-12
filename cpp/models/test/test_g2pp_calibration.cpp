@@ -121,3 +121,25 @@ TEST_CASE("An inconsistent strip is flagged, not silently fitted", "[models][g2p
     CHECK(cal.rows[4].errorBp > 1.0);
     CHECK_THROWS_AS(calibrateG2ppToStrip(G2pp(0.1, 0.1, 0.01, 0.01, 0.0), {}), rl::InputError);
 }
+
+TEST_CASE("Pair calibration: two swaptions repriced exactly across correlations, and by one factor too", "[models][g2pp][calibration][pair]") {
+    const UsdMarket& m = usdMarket();
+    const auto ins = makeAtmMatrix(m.asOf, m.curves, m.cube, {5}, {2, 10});
+    for (double rho : {-0.95, -0.85, -0.75}) {
+        const G2pp model = calibrateG2ppToPair(0.40, 0.03, rho, ins[0], ins[1]);
+        CHECK_THAT(model.rho(), WithinAbs(rho, 1e-15));
+        for (const CalibrationInstrument& ci : ins) CHECK_THAT(impliedNormalVol(ci.right, g2ppSwaptionPrice(model, ci.right)), WithinAbs(ci.marketVol, 1e-9));
+    }
+    const G2pp one = calibrateOneFactorToPair(ins[0], ins[1]);
+    CHECK(one.sigma2() == 0.0);
+    for (const CalibrationInstrument& ci : ins) CHECK_THAT(impliedNormalVol(ci.right, g2ppSwaptionPrice(one, ci.right)), WithinAbs(ci.marketVol, 1e-9));
+    // The pair of vols restricts the correlation: with these speeds a 10-year vol as high as the 2-year
+    // one needs strongly negatively correlated factors. Outside that range the answer is "no", not a fit.
+    CHECK_THROWS_AS(calibrateG2ppToPair(0.40, 0.03, 0.0, ins[0], ins[1]), rl::CalibrationError);
+    CHECK_THROWS_AS(calibrateG2ppToPair(0.40, 0.03, -0.9, ins[0], ins[1], 1.0, 2.0, 1.0), rl::InputError);
+    // A pair no mean reversion in the range can produce is reported, not approximated.
+    auto impossible = ins;
+    impossible[1].marketVol *= 3.0;
+    impossible[1].marketPrice = marketSwaptionPrice(impossible[1].right, impossible[1].marketVol);
+    CHECK_THROWS_AS(calibrateOneFactorToPair(impossible[0], impossible[1], 0.0, 0.5), rl::CalibrationError);
+}

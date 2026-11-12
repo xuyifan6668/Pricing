@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <variant>
 
 namespace rl::models {
@@ -201,6 +202,72 @@ G2ppStripCalibration calibrateG2ppToStrip(const G2pp& shape, const std::vector<C
     }
     if (out.maxAbsErrorBp > 0.01) out.ok = false;
     return out;
+}
+
+namespace {
+
+/// The volatility level that reprices `ci` for a model shape given at unit level; the price rises with it.
+double levelFor(const std::function<G2pp(double)>& atLevel, const CalibrationInstrument& ci) {
+    auto error = [&](double logLevel) { return g2ppSwaptionPrice(atLevel(std::exp(logLevel)), ci.right) - ci.marketPrice; };
+    // Walk the bracket up from a negligible level: at absurd volatilities the price saturates or overflows.
+    const double lo = std::log(1e-4);
+    RL_REQUIRE(error(lo) < 0.0, "G2++ pair calibration: market price of " + ci.right.label + " is at or below intrinsic");
+    double hi = lo + std::log(2.0);
+    while (!(error(hi) > 0.0)) {
+        hi += std::log(2.0);
+        RL_REQUIRE(hi < std::log(1e3), "G2++ pair calibration: market price of " + ci.right.label + " is not attainable");
+    }
+    math::RootOptions ro;
+    ro.xTol = 1e-13;
+    ro.maxIter = 200;
+    return std::exp(math::brent(error, lo, hi, ro).x);
+}
+
+/// Solve a one-parameter family of shapes for the member that, once its level reprices `first`,
+/// also reprices `second`. The second vol need not be monotone in the shape parameter, so there can
+/// be more than one such member: the one closest to `preferred` is returned.
+G2pp solvePair(const std::function<G2pp(double, double)>& build, double lo, double hi, double preferred, bool logScale, const CalibrationInstrument& first,
+               const CalibrationInstrument& second, const char* who) {
+    auto at = [&](double p) {
+        const double shape = logScale ? std::exp(p) : p;
+        return build(shape, levelFor([&](double level) { return build(shape, level); }, first));
+    };
+    auto error = [&](double p) { return modelVolBp(at(p), second) - second.marketVol * 1e4; };
+    const double a = logScale ? std::log(lo) : lo, b = logScale ? std::log(hi) : hi, target = logScale ? std::log(preferred) : preferred;
+    const int n = 60;
+    double prev = a, ePrev = error(a), nearest = std::fabs(ePrev), root = 0.0;
+    bool found = false;
+    for (int i = 1; i <= n; ++i) {
+        const double p = a + (b - a) * i / n, e = error(p);
+        nearest = std::min(nearest, std::fabs(e));
+        if ((ePrev < 0.0) != (e < 0.0)) {
+            math::RootOptions ro;
+            ro.xTol = 1e-12;
+            ro.maxIter = 200;
+            const double r = math::brent(error, prev, p, ro).x;
+            if (!found || std::fabs(r - target) < std::fabs(root - target)) root = r;
+            found = true;
+        }
+        prev = p;
+        ePrev = e;
+    }
+    if (!found) throw CalibrationError(std::string(who) + ": no model in the range reprices both " + first.right.label + " and " + second.right.label, {0.0, nearest});
+    return at(root);
+}
+
+} // namespace
+
+G2pp calibrateG2ppToPair(double kappa1, double kappa2, double rho, const CalibrationInstrument& first, const CalibrationInstrument& second,
+                         double preferredRatio, double ratioMin, double ratioMax) {
+    RL_REQUIRE(ratioMin > 0.0 && ratioMax > ratioMin && preferredRatio > 0.0, "calibrateG2ppToPair: need 0 < ratioMin < ratioMax and a positive preferred ratio");
+    return solvePair([&](double ratio, double level) { return G2pp(kappa1, kappa2, 0.01 * level, 0.01 * level * ratio, rho); }, ratioMin, ratioMax, preferredRatio,
+                     true, first, second, "calibrateG2ppToPair");
+}
+
+G2pp calibrateOneFactorToPair(const CalibrationInstrument& first, const CalibrationInstrument& second, double kappaMin, double kappaMax) {
+    RL_REQUIRE(kappaMax > kappaMin, "calibrateOneFactorToPair: empty mean-reversion range");
+    return solvePair([&](double kappa, double level) { return G2pp(kappa, 1.0, 0.01 * level, 0.0, 0.0); }, kappaMin, kappaMax, 0.0, false, first, second,
+                     "calibrateOneFactorToPair");
 }
 
 } // namespace rl::models
