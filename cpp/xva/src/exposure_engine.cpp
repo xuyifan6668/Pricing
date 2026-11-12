@@ -276,6 +276,11 @@ ExposureProfile simulate(const Dynamics& model, const std::vector<instruments::S
         out.collateralisedEne[0] = std::min(out.valueToday - collateralToday, 0.0);
     }
 
+    if (opt.keepPaths) {
+        out.pathValue.assign(nTimes, std::vector<double>(opt.paths, out.valueToday));
+        out.pathState.assign(nTimes, std::vector<double>(opt.paths, 0.0));
+    }
+
     // --- Paths ---------------------------------------------------------------------------------------
     std::vector<double> sumSq(nTimes, 0.0);
     std::vector<std::vector<double>> positive(nTimes, std::vector<double>(opt.paths, 0.0)); // for the quantile
@@ -312,6 +317,10 @@ ExposureProfile simulate(const Dynamics& model, const std::vector<instruments::S
             out.ene[i] += std::min(net, 0.0);
             out.grossEpe[i] += gross;
             positive[i][p] = pos;
+            if (opt.keepPaths) {
+                out.pathValue[i][p] = net;
+                out.pathState[i][p] = x1;
+            }
             if (csa) {
                 const double residual = net - collateral[i];
                 out.collateralisedEpe[i] += std::max(residual, 0.0);

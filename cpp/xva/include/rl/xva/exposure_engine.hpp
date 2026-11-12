@@ -66,6 +66,7 @@ struct ExposureOptions {
     std::size_t paths = 20000;
     std::uint64_t seed = 20260904;
     double quantile = 0.975;
+    bool keepPaths = false; ///< also return the netted value and the state on every path (for wrong-way risk)
 };
 
 struct ExposureProfile {
@@ -78,6 +79,10 @@ struct ExposureProfile {
     std::vector<double> collateralisedEpe; ///< empty when no CSA was given
     std::vector<double> collateralisedEne;
     double valueToday = 0.0;              ///< netted value of the trades on today's curve
+
+    /// Only with `keepPaths`: per exposure date, per path, the netted deflated value and the model's
+    /// first state variable. Entry 0 (today) holds the deterministic value and a zero state.
+    std::vector<std::vector<double>> pathValue, pathState;
 };
 
 /// Exposure dates for a set of trades: today, every `stepYears` out to the last accrual end, and
