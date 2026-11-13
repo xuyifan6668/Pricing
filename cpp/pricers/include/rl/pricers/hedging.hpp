@@ -65,12 +65,19 @@ struct MarketMove {
     double volShiftBp = 0.0;
 };
 
+/// A rates scenario: every OUTRIGHT rate quote (deposits, FRAs, futures, OIS swaps) moves by
+/// parallel + slope × (pillar years − 10)/20, capped at 30 years; basis spreads and turn-of-year jumps do
+/// not move; every vol quote moves by `volBp`. A "parallel shift" of all quotes would also move the
+/// Fed Funds–SOFR basis by the full amount, turning a −4 bp spread into +196 bp at +200 bp, which is not
+/// a rates move and which the bootstrap rightly fails to solve.
+MarketMove ratesMove(const models::UsdMarket& market, double parallelBp, double slopeBp = 0.0, double volBp = 0.0);
+
 /// The market after a move: curve quotes shifted and re-bootstrapped, vol screen shifted and refitted.
 models::UsdMarket applyMove(const models::UsdMarket& market, const MarketMove& move);
 
 /// The sensitivities a risk system would report for a price: par-quote delta (per bp, central ±1 bp
-/// bumps of each quote), parallel gamma (per bp², from ±`gammaBumpBp` parallel shifts) and parallel
-/// vega (per bp of normal vol, ±1 bp central).
+/// bumps of each quote, basis spreads included), parallel gamma (per bp², from ±`gammaBumpBp` rates moves,
+/// see ratesMove) and parallel vega (per bp of normal vol, ±1 bp central).
 ///
 /// Why gamma takes a wider bump. A second difference divides by the bump squared, so any noise in the
 /// price is amplified by 1/h². A PDE price re-solved after re-calibration moves its grid with the
@@ -89,7 +96,7 @@ Sensitivities computeSensitivities(const models::UsdMarket& market, const std::f
 struct PnlExplain {
     double actual = 0.0;      ///< full revaluation
     double delta = 0.0;       ///< Σ δ_i shift_i
-    double gamma = 0.0;       ///< ½ Γ (mean shift)²: parallel gamma applied to the move's average
+    double gamma = 0.0;       ///< ½ Γ (mean shift)²: parallel gamma applied to the average move of the outright rate quotes
     double vega = 0.0;        ///< vega × vol shift
     double unexplained() const noexcept { return actual - delta - gamma - vega; }
 };

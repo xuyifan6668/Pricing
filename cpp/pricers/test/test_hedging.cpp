@@ -62,9 +62,7 @@ TEST_CASE("P&L explain: delta leaves a second-order residual, delta plus gamma a
     CHECK(s.parallelGamma > 0.0); // a long option is long gamma
     CHECK(s.vega > 0.0);
     auto residuals = [&](double h) {
-        MarketMove move;
-        move.quoteShiftBp.assign(m.problem.size(), h);
-        const PnlExplain e = explainPnl(m, s, price, move);
+        const PnlExplain e = explainPnl(m, s, price, ratesMove(m, h));
         return std::pair{e.actual - e.delta, e.unexplained()};
     };
     const auto [d10, g10] = residuals(10.0);

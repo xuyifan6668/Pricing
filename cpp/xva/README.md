@@ -39,5 +39,8 @@ money is the swap's closed form. Adjoint CVA delta = central bump to 2e-10; the 
 parallel shift. Two factors: the engine reproduces the two-factor swaption strip on coupon dates; with the
 second factor off it is the one-factor engine; factor correlation moves a curve-slope position and not the
 calibrated swap; the regression-based Bermudan profile matches the one-factor grid with the second factor off.
+PFE: the engine's quantile matches the closed form. CVA across 12 seeds is unbiased and its spread halves
+when paths quadruple. Stress: the chain holds in eight shocked markets and refuses negative rates and an
+inconsistent scenario. A golden regression pack (`test_golden.cpp`) pins 43 numbers from every layer.
 Wrong-way risk: no dependence is the independent CVA exactly; the CDS curve is repriced for any dependence;
 credit that worsens with rates raises the payer's CVA and lowers the receiver's.

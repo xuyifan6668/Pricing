@@ -7,7 +7,7 @@ The Bermudan swaption priced three ways under LGM, swap exposure, and risk.
 | The Bermudan as exercise rights + model; calibration to its own strip | `bermudan.hpp` |
 | Crank–Nicolson finite differences, optional Rannacher start-up, exercise boundary | `bermudan_pde.hpp` |
 | Longstaff–Schwartz lower bound; Andersen–Broadie upper bound | `bermudan_mc.hpp` |
-| The Bermudan under G2++: exact two-state simulation, regression on both states | `bermudan_g2pp.hpp` |
+| The Bermudan under G2++: exact two-state simulation, regression on both states, Andersen–Broadie upper bound | `bermudan_g2pp.hpp` |
 | CMS spread option under G2++: quadrature, with the two rates' vols and correlation | `cms_spread.hpp` |
 | Cheyette by Monte Carlo: Europeans, strip calibration, the Bermudan | `cheyette_mc.hpp` |
 | Delta-hedging simulation; sensitivities and P&L explain | `hedging.hpp` |

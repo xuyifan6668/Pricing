@@ -19,4 +19,5 @@ rl_add_module(
     test/test_cva_risk.cpp
     test/test_wrong_way.cpp
     test/test_golden.cpp
+    test/test_stress.cpp
 )

@@ -149,6 +149,17 @@ namespace {
 double onebp(const bootstrap::BootstrapInstrument& bi) { return bi.type == market::QuoteType::Future ? -0.01 : 1e-4; }
 } // namespace
 
+MarketMove ratesMove(const models::UsdMarket& market, double parallelBp, double slopeBp, double volBp) {
+    MarketMove mv;
+    for (const auto& bi : market.problem.instruments()) {
+        const bool outright = bi.type != market::QuoteType::BasisSwap && bi.type != market::QuoteType::Turn;
+        const double years = std::min(market.curves.discount().time(bi.maturity), 30.0);
+        mv.quoteShiftBp.push_back(outright ? parallelBp + slopeBp * (years - 10.0) / 20.0 : 0.0);
+    }
+    mv.volShiftBp = volBp;
+    return mv;
+}
+
 models::UsdMarket applyMove(const models::UsdMarket& market, const MarketMove& move) {
     const std::size_t n = market.problem.size();
     RL_REQUIRE(move.quoteShiftBp.empty() || move.quoteShiftBp.size() == n, "applyMove: need one shift per curve quote");
@@ -169,9 +180,12 @@ Sensitivities computeSensitivities(const models::UsdMarket& market, const std::f
     const std::size_t n = market.problem.size();
     auto shifted = [&](std::size_t i, double bp) {
         MarketMove m;
-        m.quoteShiftBp.assign(n, 0.0);
-        if (i < n) m.quoteShiftBp[i] = bp;
-        else m.quoteShiftBp.assign(n, bp);
+        if (i < n) {
+            m.quoteShiftBp.assign(n, 0.0);
+            m.quoteShiftBp[i] = bp;
+        } else {
+            m = ratesMove(market, bp);
+        }
         return price(applyMove(market, m));
     };
     Sensitivities s;
@@ -190,11 +204,16 @@ PnlExplain explainPnl(const models::UsdMarket& market, const Sensitivities& s, c
     PnlExplain e;
     e.actual = price(applyMove(market, move)) - s.value;
     double mean = 0.0;
+    std::size_t outright = 0;
     for (std::size_t i = 0; i < move.quoteShiftBp.size(); ++i) {
         e.delta += s.delta[i] * move.quoteShiftBp[i];
-        mean += move.quoteShiftBp[i];
+        const auto type = market.problem.instruments()[i].type;
+        if (type != market::QuoteType::BasisSwap && type != market::QuoteType::Turn) {
+            mean += move.quoteShiftBp[i];
+            ++outright;
+        }
     }
-    if (!move.quoteShiftBp.empty()) mean /= static_cast<double>(move.quoteShiftBp.size());
+    if (outright > 0) mean /= static_cast<double>(outright);
     e.gamma = 0.5 * s.parallelGamma * mean * mean;
     e.vega = s.vega * move.volShiftBp;
     return e;
