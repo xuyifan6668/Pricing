@@ -824,3 +824,208 @@ and default does not itself move rates. The section measures how much CVA moves 
 
 Not modelled: initial margin, bilateral survival weighting, more than one currency. The engine values a
 floating coupon in progress at the term rate fixed at its period start.
+
+## 12. Testing the models against something else
+
+Every check in sections 1–11 compares this library with itself: closed form against quadrature, PDE against
+Monte Carlo, adjoint against bump. Those share one author, one curve stack and one reading of the conventions.
+This section is the outside view: another library, the model the formula approximates, a model with a smile,
+and whether the risk actually hedges.
+
+### 12.1 An independent library: QuantLib
+
+`tools/benchmark_quantlib.py` rebuilds a case in QuantLib 1.44 from what defines it and nothing else: discount factors on
+the trade's own dates, the swap's accrual dates, and the two Hull-White parameters (κ = 3%, σ = 90 bp). QuantLib then
+computes its own accruals, forwards and annuities and prices with its own engines: the Jamshidian closed form for the
+nine Europeans, and a trinomial lattice and a finite-difference solver in the short rate for the Bermudan. This
+library prices the same Bermudan by Crank–Nicolson in LGM's variance clock. No code is shared.
+
+| Trade | Swap value, worst diff (bp) | Europeans, worst diff (bp) | Bermudan, here (bp) | QuantLib FD (bp) | Diff (bp) | QuantLib lattice (bp) | Diff (bp) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| payer 3.50% | 0e+00 | 8e-06 | 437.028 | 437.032 | -0.004 | 437.069 | -0.041 |
+| payer 4.50% | 0e+00 | 2e-05 | 207.051 | 207.051 | +0.001 | 207.110 | -0.058 |
+| payer 2.50% | 0e+00 | 3e-06 | 848.196 | 848.202 | -0.006 | 848.175 | +0.021 |
+| receiver 3.50% | 0e+00 | 7e-06 | 421.092 | 421.096 | -0.004 | 421.110 | -0.018 |
+
+- The swap and the nine Europeans per trade agree to rounding. The swaption formulas are different derivations
+  (LGM with Jamshidian's decomposition here, Hull-White bond options there), so this tests both the model mapping
+  and the conventions.
+- The Bermudan agrees to a few thousandths of a basis point with QuantLib's finite differences and a few
+  hundredths with its lattice, whose error is first order in the step.
+- An earlier version handed QuantLib only a weekly grid of discount factors. Every number was then off by up to
+  0.14 bp: QuantLib interpolated between weekly points, missing the turn-of-year jumps in this curve. That is the
+  kind of convention mismatch an independent benchmark exists to find, and why the case now carries every date.
+
+The comparison runs as a test (`tools/test_benchmark_quantlib.py`) whenever QuantLib is installed.
+
+### 12.2 The smile in the Bermudan: which strike is the model calibrated at?
+
+LGM has no smile: once calibrated it is right at one strike per expiry. The standard choice is the trade's own
+fixed rate, so every European the Bermudan contains is repriced. But the holder exercises at the exercise boundary,
+which is far from the strike, and the market's vol there is different. Calibrating the same model at other strikes
+and repricing the same trade measures how much the price depends on that choice.
+
+| Trade | At trade strike (bp) | At the money (bp) | Change | At the boundary (bp) | Change |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| payer 3.50% | 457.8 | 459.1 | +1.2 | 474.2 | +16.4 |
+| payer 4.50% (OTM) | 233.5 | 218.9 | -14.6 | 248.5 | +15.0 |
+| payer 2.50% (ITM) | 863.8 | 874.2 | +10.4 | 872.9 | +9.1 |
+
+Calibration strikes and market vols for the payer 3.50% (the boundary is found by iterating: it depends on the model):
+
+| Expiry (y) | Forward % | Boundary % | Vol at strike (bp) | Vol at the money (bp) | Vol at boundary (bp) |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 3.4216 | 4.6109 | 92.2 | 91.8 | 100.2 |
+| 2 | 3.4364 | 4.6328 | 87.9 | 87.7 | 94.2 |
+| 3 | 3.5361 | 4.4336 | 85.1 | 85.3 | 89.3 |
+| 4 | 3.5842 | 4.3266 | 83.0 | 83.3 | 86.3 |
+| 5 | 3.6280 | 4.1920 | 81.8 | 82.2 | 84.3 |
+| 6 | 3.6643 | 4.0697 | 80.4 | 81.0 | 82.4 |
+| 7 | 3.7005 | 3.9121 | 79.7 | 80.2 | 80.9 |
+| 8 | 3.7378 | 3.7411 | 78.7 | 79.3 | 79.3 |
+| 9 | 3.7739 | 3.5000 | 78.2 | 78.8 | 78.2 |
+
+- The choice of calibration strike moves the price by up to 16 bp. That is the same order as the effect of
+  mean reversion in section 6 or of a second factor in section 9.
+- Calibrating at the boundary is not the answer either. It gives the model the boundary's higher vol everywhere,
+  including where rates are low and the market's vol is lower. Section 12.3 prices the trade with a model that has
+  the smile.
+
+### 12.3 A model with a smile: Cheyette with local volatility
+
+The quasi-Gaussian (Cheyette) model lets the short rate's volatility depend on the rate: η(t, x) = λ(t)(1 + b x).
+With b = 0 it is Hull-White (tested against the closed form and the PDE). The cost is a second state y, the
+variance accumulated along the path, which the model must carry once volatility depends on the path. λ(t) is
+bootstrapped to the same co-terminal strip at the trade strike for every b, so each model reprices the nine
+Europeans; b is then chosen so that the model's 5-year smile has the market's slope over ±100 bp.
+
+| Skew b | Model 5Y smile slope, ±100 bp (bp) | Bermudan (bp) | Strip error (bp) |
+| ---: | ---: | ---: | ---: |
+| -10 | -8.0 | 454.2 ± 0.5 | 1.0e-10 |
+| +0 | +0.9 | 457.1 ± 0.6 | 5.7e-12 |
+| +10 | +10.0 | 460.0 ± 0.6 | 1.3e-12 |
+| +20 | +19.2 | 463.1 ± 0.8 | 2.8e-11 |
+| +30 | +28.6 | 466.7 ± 0.9 | 3.1e-11 |
+| **+6.8 (fitted)** | **+7.1** | **459.0 ± 0.6** | 1.4e-12 |
+
+Market slope: +7.1 bp. The 5-year smile, market against the model without and with the fitted skew:
+
+| Strike vs forward (bp) | Market (bp) | Cheyette, b = 0 (bp) | Cheyette, b = 6.8 (bp) |
+| ---: | ---: | ---: | ---: |
+| -100 | 79.15 | 81.33 | 78.62 |
+| -50 | 80.60 | 81.56 | 80.41 |
+| +0 | 82.23 | 81.78 | 82.15 |
+| +50 | 84.09 | 82.02 | 83.93 |
+| +100 | 86.23 | 82.28 | 85.69 |
+
+- **With the skew fitted to the market, the Bermudan is 459.0 bp**: +1.2 bp from LGM calibrated at the trade
+  strike (457.8 bp) and -15.2 bp from LGM calibrated at the boundary (474.2 bp). Calibrating a
+  smile-less model at the boundary over-corrects by most of that difference.
+- The skew matters, but less than the scan's range suggests. b from −10 to +30 moves the price 13 bp; the market
+  pins b, and the fitted model lands close to the trade-strike calibration.
+- What one skew parameter cannot do is fit the smile's curvature (the wings): that needs stochastic volatility.
+  The price is a least-squares Monte Carlo lower bound with time-stepping, not a PDE value.
+
+### 12.4 Hagan's formula against the SABR model
+
+The cube is fitted with Hagan's expansion, an approximation to the SABR model's implied vol that is accurate when
+ν²T is small. Its fit error (section 3) only measures the formula against itself. Here the model is simulated with
+the fitted parameters of four nodes: α exactly, the forward by Euler absorbed at zero, antithetic paths and the
+forward as a control variate, 200,000 paths.
+
+| Node | ν²T | Hagan ATM (bp) | Model ATM (bp) | Hagan − model, ATM (bp) | Lowest strike vs fwd (bp) | Hagan − model there (bp) | Worst |Hagan − model| (bp) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1Yx10Y | 0.17 | 92.12 | 91.86 ± 0.21 | +0.26 | -200 | +0.82 | 0.82 |
+| 5Yx10Y | 0.20 | 81.13 | 80.93 ± 0.18 | +0.20 | -200 | +0.74 | 0.74 |
+| 10Yx10Y | 0.36 | 74.57 | 73.79 ± 0.15 | +0.78 | -200 | +2.06 | 2.06 |
+| 10Yx30Y | 4.90 | 62.86 | 46.79 ± 0.13 | +16.07 | -200 | +41.05 | 41.05 |
+
+![sabr_mc.png](img/sabr_mc.png)
+
+Time-stepping at the stressed node (10Y×30Y), the hardest case:
+
+| Steps a year | ATM (bp) | 150 bp below the forward (bp) |
+| ---: | ---: | ---: |
+| 25 | 46.76 ± 0.13 | 59.23 ± 0.12 |
+| 50 | 46.74 ± 0.13 | 59.25 ± 0.12 |
+| 100 | 46.79 ± 0.13 | 59.33 ± 0.12 |
+| 200 | 46.71 ± 0.14 | 59.32 ± 0.13 |
+
+- **Hagan's formula overstates the model's vol everywhere here**, by a few tenths of a basis point at 1 year and
+  growing with ν²T: about 1 to 2 bp at 10Y×10Y, with the error largest at low strikes.
+- **At the stressed node it is not an approximation any more**: +16 bp at the money and up to 41 bp at low strikes.
+  This is the node whose density goes negative (section 3). The fit is perfect, the formula is wrong, and only a
+  benchmark against the model shows it.
+- The Euler step changes the answer by less than 0.1 bp between 25 and 200 steps a year, so the gaps are the
+  formula's error, not the simulation's.
+- What a desk does about it: an arbitrage-free SABR (a PDE for the density), a higher-order expansion, or a cap on
+  how far in expiry and ν the formula is trusted, checked exactly like this.
+
+### 12.5 Does the hedge work?
+
+A desk sells the 10nc1 payer at 3.50% and delta-hedges it with the swap it would deliver on the first exercise
+date, rebalancing at a fixed frequency until that date, when the position is closed at the market's value. In a
+one-factor model with one hedge instrument the hedge replicates the option as rebalancing becomes continuous, so
+the P&L should go to zero; what is left is gamma times the move over each interval. 4,000 paths each.
+
+| Strategy |  | Mean P&L (bp) | P&L std dev (bp) | Ratio to the row above (theory) |
+| --- | ---: | ---: | ---: | ---: |
+| sell and hold | — | +3.5 ± 4.4 | 277.7 |  |
+| delta hedge, 4 times a year |  | +1.2 ± 0.9 | 55.3 |  |
+| delta hedge, 12 times a year |  | +0.7 ± 0.5 | 33.1 | 1.67 (√3.00 = 1.73) |
+| delta hedge, 52 times a year |  | +0.4 ± 0.2 | 15.5 | 2.13 (√4.33 = 2.08) |
+| delta hedge, 252 times a year |  | +0.1 ± 0.1 | 7.4 | 2.11 (√4.85 = 2.20) |
+
+![hedge_sim.png](img/hedge_sim.png)
+
+Hedging weekly with a model whose vol is wrong by a factor s, while the market moves with the true one:
+
+| s | Hedger's price (bp) | Mispricing (bp) | Mean P&L (bp) | P&L std dev (bp) |
+| ---: | ---: | ---: | ---: | ---: |
+| 0.8 | 366.9 | -90.9 | -90.5 ± 0.4 | 27.2 |
+| 0.9 | 412.2 | -45.6 | -45.2 ± 0.3 | 18.7 |
+| 1.1 | 503.6 | +45.8 | +46.2 ± 0.3 | 17.9 |
+| 1.2 | 549.5 | +91.7 | +92.1 ± 0.4 | 23.1 |
+
+- **The delta hedge works, and as theory says.** It cuts the P&L's standard deviation from 278 bp to 7.4 bp with daily
+  rebalancing, falling like the square root of the interval.
+- **With the wrong vol, the mean P&L is the mispricing.** Selling at a 20%-too-low vol loses 91 bp on average,
+  matching the 91 bp of premium given away. The hedge removes the noise, not the error in the price; and the
+  noise left is larger than with the right vol, because the deltas are wrong too.
+- The simulation stops at the first exercise date. Hedging through exercise decisions, and the vega hedge with
+  swaptions that a real desk would also run, are not modelled.
+
+### 12.6 P&L explain
+
+The sensitivities a risk system would report for the Bermudan (notional 1, in bp): total par delta
+2.748 per bp, parallel gamma 0.0168 per bp², vega 5.488 per bp of normal vol. Each market move is then
+revalued in full (re-bootstrap, re-fit the cube, re-calibrate, re-price) and the change attributed to delta (all 37
+par deltas against the move in each quote), gamma (parallel gamma against the average move) and vega. Ten day-sized
+random moves (parallel, twist of the curve's slope, parallel vol), then two stresses:
+
+| Scenario | Instrument | Actual (bp) | Delta | Gamma | Vega | Unexplained |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| day 1 | Bermudan | -9.64 | -15.73 | +0.52 | +5.67 | -0.10 |
+| day 2 | Bermudan | -17.72 | -28.86 | +0.69 | +10.18 | +0.27 |
+| day 3 | Bermudan | +0.35 | -7.73 | +0.17 | +7.94 | -0.03 |
+| day 4 | Bermudan | +10.40 | +5.64 | +0.01 | +4.75 | +0.00 |
+| day 5 | Bermudan | +12.78 | +14.70 | +0.30 | -2.14 | -0.08 |
+| day 6 | Bermudan | +45.16 | +47.19 | +1.58 | -4.22 | +0.60 |
+| day 7 | Bermudan | +12.73 | +3.60 | +0.04 | +9.14 | -0.05 |
+| day 8 | Bermudan | -37.48 | -34.24 | +0.87 | -4.50 | +0.39 |
+| day 9 | Bermudan | -17.31 | -7.85 | +0.02 | -9.52 | +0.05 |
+| day 10 | Bermudan | +3.45 | +7.02 | +0.03 | -3.60 | -0.00 |
+| stress: rates +50; vol +5 | Bermudan | +184.45 | +137.39 | +21.00 | +27.44 | -1.38 |
+| stress: rates -50; steepener 20; vol +10 | Bermudan | -52.43 | -125.63 | +23.02 | +54.88 | -4.70 |
+
+- **On day-sized moves the explain works:** the Bermudan's unexplained P&L is at most 0.60 bp against moves of up to
+  45 bp, and the swap's at most 0.05 bp. Vega is often as large as delta for the Bermudan, which is why a
+  rates-only explain of an option book fails.
+- **Under stress it degrades.** In the scenario "stress: rates -50; steepener 20; vol +10", -4.7 bp of -52.4 bp is unexplained.
+  The explain has no rates–vol cross-gamma (vanna) and applies parallel gamma to the average move, so it misses
+  the curvature of a twist; which of the two dominates here is not measured.
+- **Bump sizes are part of the method.** Gamma is a second difference: on the default 400-step PDE grid a ±1 bp
+  bump gives a gamma of the wrong sign, because the grid moves with every re-calibration and leaves a wiggle of a
+  few thousandths of a basis point. The explain uses a 1600-step grid and a ±10 bp bump for gamma; the test
+  `P&L explain: delta leaves a second-order residual, ...` checks that the residual after delta is second order
+  and that gamma removes most of it.
