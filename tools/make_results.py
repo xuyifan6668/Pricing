@@ -1106,6 +1106,250 @@ floating coupon in progress at the term rate fixed at its period start.
 """
 
 
+def outside(res: Path) -> str:
+    """Section 12: the tests that do not compare the library with itself."""
+    parts = ["""## 12. Testing the models against something else
+
+Every check in sections 1–11 compares this library with itself: closed form against quadrature, PDE against
+Monte Carlo, adjoint against bump. Those share one author, one curve stack and one reading of the conventions.
+This section is the outside view: another library, the model the formula approximates, a model with a smile,
+and whether the risk actually hedges.
+"""]
+
+    # 12.1 QuantLib
+    bench = res / "benchmark_quantlib.csv"
+    if bench.exists():
+        q = read(res, "benchmark_quantlib")
+        cases = list(dict.fromkeys(r["case"] for r in q))
+
+        def worst(case: str, prefix: str) -> float:
+            return max(abs(float(r["difference"])) for r in q if r["case"] == case and r["quantity"].startswith(prefix))
+
+        body = []
+        for c in cases:
+            berm = [r for r in q if r["case"] == c and r["quantity"].startswith("Bermudan")]
+            body.append([c, f"{worst(c, 'swap value'):.0e}", f"{worst(c, 'European'):.0e}", f"{float(berm[0]['ratelib']):.3f}", f"{float(berm[1]['quantlib']):.3f}", f"{float(berm[1]['difference']):+.3f}", f"{float(berm[0]['quantlib']):.3f}", f"{float(berm[0]['difference']):+.3f}"])
+        parts.append(f"""### 12.1 An independent library: QuantLib
+
+`tools/benchmark_quantlib.py` rebuilds a case in QuantLib {__import__('QuantLib').__version__ if _has_quantlib() else ''} from what defines it and nothing else: discount factors on
+the trade's own dates, the swap's accrual dates, and the two Hull-White parameters (κ = 3%, σ = 90 bp). QuantLib then
+computes its own accruals, forwards and annuities and prices with its own engines: the Jamshidian closed form for the
+nine Europeans, and a trinomial lattice and a finite-difference solver in the short rate for the Bermudan. This
+library prices the same Bermudan by Crank–Nicolson in LGM's variance clock. No code is shared.
+
+{table(["Trade", "Swap value, worst diff (bp)", "Europeans, worst diff (bp)", "Bermudan, here (bp)", "QuantLib FD (bp)", "Diff (bp)", "QuantLib lattice (bp)", "Diff (bp)"], body, "lrrrrrrr")}
+
+- The swap and the nine Europeans per trade agree to rounding. The swaption formulas are different derivations
+  (LGM with Jamshidian's decomposition here, Hull-White bond options there), so this tests both the model mapping
+  and the conventions.
+- The Bermudan agrees to a few thousandths of a basis point with QuantLib's finite differences and a few
+  hundredths with its lattice, whose error is first order in the step.
+- An earlier version handed QuantLib only a weekly grid of discount factors. Every number was then off by up to
+  0.14 bp: QuantLib interpolated between weekly points, missing the turn-of-year jumps in this curve. That is the
+  kind of convention mismatch an independent benchmark exists to find, and why the case now carries every date.
+
+The comparison runs as a test (`tools/test_benchmark_quantlib.py`) whenever QuantLib is installed.
+""")
+
+    # 12.2 Smile and the calibration strike
+    sb = read(res, "smile_bermudan")
+    st = read(res, "smile_strikes")
+    trades = list(dict.fromkeys(r["trade"] for r in sb))
+    body = []
+    for t in trades:
+        rows = {r["calibration"]: float(r["bermudan_bp"]) for r in sb if r["trade"] == t}
+        body.append([t, f"{rows['trade strike']:.1f}", f"{rows['at the money']:.1f}", f"{rows['at the money'] - rows['trade strike']:+.1f}", f"{rows['exercise boundary']:.1f}", f"{rows['exercise boundary'] - rows['trade strike']:+.1f}"])
+    first = [r for r in st if r["trade"] == trades[0]]
+    strike_body = [[f"{float(r['expiry']):.0f}", r["forward_pct"], r["boundary_pct"], f"{float(r['vol_trade_strike_bp']):.1f}", f"{float(r['vol_atm_bp']):.1f}", f"{float(r['vol_boundary_bp']):.1f}"] for r in first]
+    parts.append(f"""### 12.2 The smile in the Bermudan: which strike is the model calibrated at?
+
+LGM has no smile: once calibrated it is right at one strike per expiry. The standard choice is the trade's own
+fixed rate, so every European the Bermudan contains is repriced. But the holder exercises at the exercise boundary,
+which is far from the strike, and the market's vol there is different. Calibrating the same model at other strikes
+and repricing the same trade measures how much the price depends on that choice.
+
+{table(["Trade", "At trade strike (bp)", "At the money (bp)", "Change", "At the boundary (bp)", "Change"], body)}
+
+Calibration strikes and market vols for the {trades[0]} (the boundary is found by iterating: it depends on the model):
+
+{table(["Expiry (y)", "Forward %", "Boundary %", "Vol at strike (bp)", "Vol at the money (bp)", "Vol at boundary (bp)"], strike_body, "rrrrrr")}
+
+- The choice of calibration strike moves the price by up to {max(max(abs(float(r[3])), abs(float(r[5]))) for r in body):.0f} bp. That is the same order as the effect of
+  mean reversion in section 6 or of a second factor in section 9.
+- Calibrating at the boundary is not the answer either. It gives the model the boundary's higher vol everywhere,
+  including where rates are low and the market's vol is lower. Section 12.3 prices the trade with a model that has
+  the smile.
+""")
+
+    # 12.3 Cheyette
+    cs = read(res, "cheyette_scan")
+    cf = read(res, "cheyette_fit")[0]
+    fitted = cs[-1]
+    scan = cs[:-1]
+    body = [[f"{float(r['skew']):+.0f}", f"{float(r['model_skew_bp']):+.1f}", f"{float(r['bermudan_bp']):.1f} ± {float(r['bermudan_se_bp']):.1f}", r["strip_error_bp"]] for r in scan]
+    body.append([f"**{float(fitted['skew']):+.1f} (fitted)**", f"**{float(fitted['model_skew_bp']):+.1f}**", f"**{float(fitted['bermudan_bp']):.1f} ± {float(fitted['bermudan_se_bp']):.1f}**", fitted["strip_error_bp"]])
+    sm = read(res, "cheyette_smile")
+    fit_smile = [r for r in sm if abs(float(r["skew"]) - float(fitted["skew"])) < 1e-6]
+    flat = [r for r in sm if float(r["skew"]) == 0.0]
+    smile_body = [[f"{float(a['strike_offset_bp']):+.0f}", f"{float(a['market_vol_bp']):.2f}", f"{float(b['model_vol_bp']):.2f}", f"{float(a['model_vol_bp']):.2f}"] for a, b in zip(fit_smile, flat)]
+    parts.append(f"""### 12.3 A model with a smile: Cheyette with local volatility
+
+The quasi-Gaussian (Cheyette) model lets the short rate's volatility depend on the rate: η(t, x) = λ(t)(1 + b x).
+With b = 0 it is Hull-White (tested against the closed form and the PDE). The cost is a second state y, the
+variance accumulated along the path, which the model must carry once volatility depends on the path. λ(t) is
+bootstrapped to the same co-terminal strip at the trade strike for every b, so each model reprices the nine
+Europeans; b is then chosen so that the model's 5-year smile has the market's slope over ±100 bp.
+
+{table(["Skew b", "Model 5Y smile slope, ±100 bp (bp)", "Bermudan (bp)", "Strip error (bp)"], body, "rrrr")}
+
+Market slope: {float(scan[0]['market_skew_bp']):+.1f} bp. The 5-year smile, market against the model without and with the fitted skew:
+
+{table(["Strike vs forward (bp)", "Market (bp)", "Cheyette, b = 0 (bp)", f"Cheyette, b = {float(fitted['skew']):.1f} (bp)"], smile_body, "rrrr")}
+
+- **With the skew fitted to the market, the Bermudan is {float(fitted['bermudan_bp']):.1f} bp**: {float(fitted['bermudan_bp']) - float(cf['lgm_trade_strike_bp']):+.1f} bp from LGM calibrated at the trade
+  strike ({float(cf['lgm_trade_strike_bp']):.1f} bp) and {float(fitted['bermudan_bp']) - float(cf['lgm_boundary_bp']):+.1f} bp from LGM calibrated at the boundary ({float(cf['lgm_boundary_bp']):.1f} bp). Calibrating a
+  smile-less model at the boundary over-corrects by most of that difference.
+- The skew matters, but less than the scan's range suggests. b from −10 to +30 moves the price {float(scan[-1]['bermudan_bp']) - float(scan[0]['bermudan_bp']):.0f} bp; the market
+  pins b, and the fitted model lands close to the trade-strike calibration.
+- What one skew parameter cannot do is fit the smile's curvature (the wings): that needs stochastic volatility.
+  The price is a least-squares Monte Carlo lower bound with time-stepping, not a PDE value.
+""")
+
+    # 12.4 SABR model
+    sm2 = read(res, "sabr_mc")
+    steps = read(res, "sabr_mc_steps")
+    nodes = list(dict.fromkeys(r["node"] for r in sm2))
+    body = []
+    for nd in nodes:
+        rows = [r for r in sm2 if r["node"] == nd]
+        atm = next(r for r in rows if float(r["offset_bp"]) == 0.0)
+        lo = rows[0]
+        body.append([nd, f"{float(atm['nu2t']):.2f}", f"{float(atm['hagan_bp']):.2f}", f"{float(atm['mc_bp']):.2f} ± {float(atm['mc_se_bp']):.2f}", f"{float(atm['difference_bp']):+.2f}", f"{float(lo['offset_bp']):+.0f}", f"{float(lo['difference_bp']):+.2f}", f"{max(abs(float(r['difference_bp'])) for r in rows):.2f}"])
+    step_body = [[r["steps_per_year"], f"{float(r['atm_mc_bp']):.2f} ± {float(r['atm_se_bp']):.2f}", f"{float(r['minus150_mc_bp']):.2f} ± {float(r['minus150_se_bp']):.2f}"] for r in steps]
+    fig, axes = plt.subplots(1, 2, figsize=(9.4, 3.3))
+    for ax, nd in zip(axes, [nodes[2], nodes[3]]):
+        rows = [r for r in sm2 if r["node"] == nd]
+        off = col(rows, "offset_bp")
+        ax.plot(off, col(rows, "hagan_bp"), "o-", color=ORANGE, label="Hagan's formula (what the cube uses)")
+        ax.errorbar(off, col(rows, "mc_bp"), yerr=[2 * float(r["mc_se_bp"]) for r in rows], fmt="o-", color=BLUE, capsize=3, label="the SABR model (Monte Carlo)")
+        ax.set_title(f"{nd}: same parameters, two answers")
+        ax.set_xlabel("strike minus forward, bp")
+        ax.set_ylabel("normal vol, bp")
+        ax.legend()
+    plot = save(fig, "sabr_mc.png")
+    parts.append(f"""### 12.4 Hagan's formula against the SABR model
+
+The cube is fitted with Hagan's expansion, an approximation to the SABR model's implied vol that is accurate when
+ν²T is small. Its fit error (section 3) only measures the formula against itself. Here the model is simulated with
+the fitted parameters of four nodes: α exactly, the forward by Euler absorbed at zero, antithetic paths and the
+forward as a control variate, 200,000 paths.
+
+{table(["Node", "ν²T", "Hagan ATM (bp)", "Model ATM (bp)", "Hagan − model, ATM (bp)", "Lowest strike vs fwd (bp)", "Hagan − model there (bp)", "Worst |Hagan − model| (bp)"], body, "lrrrrrrr")}
+
+{plot}
+
+Time-stepping at the stressed node (10Y×30Y), the hardest case:
+
+{table(["Steps a year", "ATM (bp)", "150 bp below the forward (bp)"], step_body, "rrr")}
+
+- **Hagan's formula overstates the model's vol everywhere here**, by a few tenths of a basis point at 1 year and
+  growing with ν²T: about 1 to 2 bp at 10Y×10Y, with the error largest at low strikes.
+- **At the stressed node it is not an approximation any more**: {float(body[3][4]):+.0f} bp at the money and up to {float(body[3][7]):.0f} bp at low strikes.
+  This is the node whose density goes negative (section 3). The fit is perfect, the formula is wrong, and only a
+  benchmark against the model shows it.
+- The Euler step changes the answer by less than 0.1 bp between 25 and 200 steps a year, so the gaps are the
+  formula's error, not the simulation's.
+- What a desk does about it: an arbitrage-free SABR (a PDE for the density), a higher-order expansion, or a cap on
+  how far in expiry and ν the formula is trusted, checked exactly like this.
+""")
+
+    # 12.5 Hedging
+    hs = read(res, "hedge_sim")
+    naked = hs[0]
+    freq = [r for r in hs if r["case"] == "delta hedge"]
+    wrong = [r for r in hs if r["case"] == "delta hedge with the wrong vol"]
+    body = [["sell and hold", "—", f"{float(naked['mean_pnl_bp']):+.1f} ± {float(naked['mean_se_bp']):.1f}", f"{float(naked['pnl_sd_bp']):.1f}", ""]]
+    for i, r in enumerate(freq):
+        ratio = "" if i == 0 else f"{float(freq[i - 1]['pnl_sd_bp']) / float(r['pnl_sd_bp']):.2f} (√{int(r['rebalances_per_year']) / int(freq[i - 1]['rebalances_per_year']):.2f} = {(int(r['rebalances_per_year']) / int(freq[i - 1]['rebalances_per_year'])) ** 0.5:.2f})"
+        body.append([f"delta hedge, {r['rebalances_per_year']} times a year", "", f"{float(r['mean_pnl_bp']):+.1f} ± {float(r['mean_se_bp']):.1f}", f"{float(r['pnl_sd_bp']):.1f}", ratio])
+    wbody = [[f"{float(r['vol_scale']):.1f}", f"{float(r['premium_bp']):.1f}", f"{float(r['premium_bp']) - float(r['true_price_bp']):+.1f}", f"{float(r['mean_pnl_bp']):+.1f} ± {float(r['mean_se_bp']):.1f}", f"{float(r['pnl_sd_bp']):.1f}"] for r in wrong]
+    fig, ax = plt.subplots(figsize=(5.4, 3.2))
+    fx = [int(r["rebalances_per_year"]) for r in freq]
+    ax.loglog(fx, col(freq, "pnl_sd_bp"), "o-", color=BLUE, label="delta-hedged")
+    ax.loglog(fx, [float(freq[0]["pnl_sd_bp"]) * (fx[0] / f) ** 0.5 for f in fx], "--", color=MUTED, label="∝ 1/√(rebalances)")
+    ax.axhline(float(naked["pnl_sd_bp"]), color=ORANGE, label="unhedged")
+    plain_log_ticks(ax, fx)
+    ax.set_title("Hedging error to the first exercise date")
+    ax.set_xlabel("rebalances a year")
+    ax.set_ylabel("P&L standard deviation, bp")
+    ax.legend()
+    plot = save(fig, "hedge_sim.png")
+    parts.append(f"""### 12.5 Does the hedge work?
+
+A desk sells the 10nc1 payer at 3.50% and delta-hedges it with the swap it would deliver on the first exercise
+date, rebalancing at a fixed frequency until that date, when the position is closed at the market's value. In a
+one-factor model with one hedge instrument the hedge replicates the option as rebalancing becomes continuous, so
+the P&L should go to zero; what is left is gamma times the move over each interval. 4,000 paths each.
+
+{table(["Strategy", "", "Mean P&L (bp)", "P&L std dev (bp)", "Ratio to the row above (theory)"], body, "lrrrr")}
+
+{plot}
+
+Hedging weekly with a model whose vol is wrong by a factor s, while the market moves with the true one:
+
+{table(["s", "Hedger's price (bp)", "Mispricing (bp)", "Mean P&L (bp)", "P&L std dev (bp)"], wbody, "rrrrr")}
+
+- **The delta hedge works, and as theory says.** It cuts the P&L's standard deviation from {float(naked['pnl_sd_bp']):.0f} bp to {float(freq[-1]['pnl_sd_bp']):.1f} bp with daily
+  rebalancing, falling like the square root of the interval.
+- **With the wrong vol, the mean P&L is the mispricing.** Selling at a 20%-too-low vol loses {abs(float(wrong[0]['mean_pnl_bp'])):.0f} bp on average,
+  matching the {abs(float(wrong[0]['premium_bp']) - float(wrong[0]['true_price_bp'])):.0f} bp of premium given away. The hedge removes the noise, not the error in the price; and the
+  noise left is larger than with the right vol, because the deltas are wrong too.
+- The simulation stops at the first exercise date. Hedging through exercise decisions, and the vega hedge with
+  swaptions that a real desk would also run, are not modelled.
+""")
+
+    # 12.6 P&L explain
+    gk = {r["instrument"]: r for r in read(res, "pnl_greeks")}
+    pe = read(res, "pnl_explain")
+    body = [[r["scenario"], r["instrument"], f"{float(r['actual_bp']):+.2f}", f"{float(r['delta_bp']):+.2f}", f"{float(r['gamma_bp']):+.2f}", f"{float(r['vega_bp']):+.2f}", f"{float(r['unexplained_bp']):+.2f}"] for r in pe if r["instrument"] == "Bermudan"]
+    days = [r for r in pe if r["scenario"].startswith("day")]
+    ber_days = [r for r in days if r["instrument"] == "Bermudan"]
+    swp_days = [r for r in days if r["instrument"] != "Bermudan"]
+    stress = [r for r in pe if r["scenario"].startswith("stress") and r["instrument"] == "Bermudan"]
+    b = gk["Bermudan"]
+    parts.append(f"""### 12.6 P&L explain
+
+The sensitivities a risk system would report for the Bermudan (notional 1, in bp): total par delta
+{float(b['total_delta_bp_per_bp']):.3f} per bp, parallel gamma {float(b['parallel_gamma_bp_per_bp2']):.4f} per bp², vega {float(b['vega_bp_per_bp']):.3f} per bp of normal vol. Each market move is then
+revalued in full (re-bootstrap, re-fit the cube, re-calibrate, re-price) and the change attributed to delta (all 37
+par deltas against the move in each quote), gamma (parallel gamma against the average move) and vega. Ten day-sized
+random moves (parallel, twist of the curve's slope, parallel vol), then two stresses:
+
+{table(["Scenario", "Instrument", "Actual (bp)", "Delta", "Gamma", "Vega", "Unexplained"], body, "llrrrrr")}
+
+- **On day-sized moves the explain works:** the Bermudan's unexplained P&L is at most {max(abs(float(r['unexplained_bp'])) for r in ber_days):.2f} bp against moves of up to
+  {max(abs(float(r['actual_bp'])) for r in ber_days):.0f} bp, and the swap's at most {max(abs(float(r['unexplained_bp'])) for r in swp_days):.2f} bp. Vega is often as large as delta for the Bermudan, which is why a
+  rates-only explain of an option book fails.
+- **Under stress it degrades.** In the scenario "{stress[1]['scenario']}", {float(stress[1]['unexplained_bp']):+.1f} bp of {float(stress[1]['actual_bp']):+.1f} bp is unexplained.
+  The explain has no rates–vol cross-gamma (vanna) and applies parallel gamma to the average move, so it misses
+  the curvature of a twist; which of the two dominates here is not measured.
+- **Bump sizes are part of the method.** Gamma is a second difference: on the default 400-step PDE grid a ±1 bp
+  bump gives a gamma of the wrong sign, because the grid moves with every re-calibration and leaves a wiggle of a
+  few thousandths of a basis point. The explain uses a 1600-step grid and a ±10 bp bump for gamma; the test
+  `P&L explain: delta leaves a second-order residual, ...` checks that the residual after delta is second order
+  and that gamma removes most of it.
+""")
+    return "\n".join(parts)
+
+
+def _has_quantlib() -> bool:
+    try:
+        import QuantLib  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--exe", default=str(ROOT / "build" / "dev" / "cpp" / "examples" / "rl_analysis"))
@@ -1136,7 +1380,7 @@ uv run python tools/make_results.py
 ```
 
 """
-    sections = [curves(res), swap_risk(res), vol(res), lgm(res), bermudan(res), risk(res), exposure(res), two_factor(res), mean_reversion(res), xva(res)]
+    sections = [curves(res), swap_risk(res), vol(res), lgm(res), bermudan(res), risk(res), exposure(res), two_factor(res), mean_reversion(res), xva(res), outside(res)]
     (ROOT / "docs" / "RESULTS.md").write_text(head + "\n".join(sections), encoding="utf-8")
     print(f"wrote docs/RESULTS.md and {len(list(IMG.glob('*.png')))} plots")
 

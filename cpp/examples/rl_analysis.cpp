@@ -22,6 +22,7 @@
 #include "rl/pricers/bermudan_pde.hpp"
 #include "rl/pricers/cheyette_mc.hpp"
 #include "rl/pricers/cms_spread.hpp"
+#include "rl/pricers/hedging.hpp"
 #include "rl/pricers/exposure.hpp"
 #include "rl/pricers/risk.hpp"
 #include "rl/vol/arbitrage.hpp"
@@ -32,6 +33,7 @@
 #include "rl/xva/wrong_way.hpp"
 #include "rl/xva/xva.hpp"
 #include "rl/vol/sabr.hpp"
+#include "rl/vol/sabr_mc.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -606,6 +608,102 @@ void cheyette(const std::filesystem::path& out, const models::UsdMarket& m) {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Does the hedge work? Delta-hedging simulation and P&L explain
+// ---------------------------------------------------------------------------------------------------
+
+void hedging(const std::filesystem::path& out, const models::UsdMarket& m) {
+    const instruments::Swap trade = swap(m, 10, 0.035);
+    const CalibratedBermudan b = pricers::calibrateBermudan(m, trade, 1.0, 0, kKappa);
+    {
+        Csv c(out, "hedge_sim.csv", "case,rebalances_per_year,vol_scale,premium_bp,true_price_bp,mean_pnl_bp,mean_se_bp,pnl_sd_bp");
+        auto row = [&](const char* name, pricers::HedgingOptions o) {
+            o.paths = 4000;
+            o.gridPoints = 401;
+            const pricers::HedgingResult r = pricers::simulateDeltaHedge(b.problem.model(), b.problem.rights(), o);
+            std::fprintf(c.f, "%s,%d,%.2f,%.3f,%.3f,%.3f,%.3f,%.3f\n", name, o.hedge ? o.rebalancesPerYear : 0, o.volScale, r.premium * kBp, r.truePrice * kBp, r.meanPnl * kBp,
+                         r.meanPnlStandardError * kBp, r.pnlStdDev * kBp);
+        };
+        row("sell and hold", {.hedge = false});
+        for (int f : {4, 12, 52, 252}) row("delta hedge", {.rebalancesPerYear = f});
+        for (double v : {0.8, 0.9, 1.1, 1.2}) row("delta hedge with the wrong vol", {.rebalancesPerYear = 52, .volScale = v});
+    }
+    pricers::PdeOptions fine;
+    fine.spaceSteps = fine.timeSteps = 1600;
+    const auto bermudanPrice = [&](const models::UsdMarket& mk) { return pricers::priceBermudanPde(pricers::calibrateBermudan(mk, trade, 1.0, 0, kKappa).problem, fine).value; };
+    const auto swapPrice = [&](const models::UsdMarket& mk) {
+        return xva::swapExposureClosedForm(models::Lgm1F::constantSigma(kKappa, 0.01, 40.0), trade, mk.curves).epe[0] +
+               xva::swapExposureClosedForm(models::Lgm1F::constantSigma(kKappa, 0.01, 40.0), trade, mk.curves).ene[0];
+    };
+    const pricers::Sensitivities sb = pricers::computeSensitivities(m, bermudanPrice), ss = pricers::computeSensitivities(m, swapPrice);
+    {
+        Csv g(out, "pnl_greeks.csv", "instrument,value_bp,total_delta_bp_per_bp,parallel_gamma_bp_per_bp2,vega_bp_per_bp");
+        for (const auto& [name, s] : {std::pair{"Bermudan", &sb}, std::pair{"10Y payer swap", &ss}}) {
+            double total = 0.0;
+            for (double d : s->delta) total += d;
+            std::fprintf(g.f, "%s,%.4f,%.6f,%.6f,%.6f\n", name, s->value * kBp, total * kBp, s->parallelGamma * kBp, s->vega * kBp);
+        }
+    }
+    // Scenarios: a parallel move and a twist (long end against short end, by pillar maturity), and a
+    // parallel vol move; ten day-sized draws, then two stresses.
+    const std::size_t n = m.problem.size();
+    std::vector<double> tenor(n);
+    for (std::size_t i = 0; i < n; ++i) tenor[i] = m.curves.discount().time(m.problem.instruments()[i].maturity);
+    auto scenario = [&](double parallel, double twist, double vol) {
+        pricers::MarketMove mv;
+        for (std::size_t i = 0; i < n; ++i) mv.quoteShiftBp.push_back(parallel + twist * (std::min(tenor[i], 30.0) - 10.0) / 20.0);
+        mv.volShiftBp = vol;
+        return mv;
+    };
+    Csv e(out, "pnl_explain.csv", "scenario,parallel_bp,twist_bp,vol_bp,instrument,actual_bp,delta_bp,gamma_bp,vega_bp,unexplained_bp");
+    math::Rng rng(7);
+    std::vector<std::tuple<std::string, double, double, double>> moves;
+    for (int k = 1; k <= 10; ++k) moves.emplace_back("day " + std::to_string(k), 6.0 * rng.gaussian(), 4.0 * rng.gaussian(), 1.5 * rng.gaussian());
+    moves.emplace_back("stress: rates +50; vol +5", 50.0, 0.0, 5.0);
+    moves.emplace_back("stress: rates -50; steepener 20; vol +10", -50.0, 20.0, 10.0);
+    for (const auto& [name, par, tw, vo] : moves) {
+        const pricers::MarketMove mv = scenario(par, tw, vo);
+        for (const auto& [inst, s, f] : {std::tuple{"Bermudan", &sb, std::function<double(const models::UsdMarket&)>(bermudanPrice)},
+                                         std::tuple{"10Y payer swap", &ss, std::function<double(const models::UsdMarket&)>(swapPrice)}}) {
+            const pricers::PnlExplain x = pricers::explainPnl(m, *s, f, mv);
+            std::fprintf(e.f, "%s,%.2f,%.2f,%.2f,%s,%.4f,%.4f,%.4f,%.4f,%.4f\n", name.c_str(), par, tw, vo, inst, x.actual * kBp, x.delta * kBp, x.gamma * kBp, x.vega * kBp,
+                         x.unexplained() * kBp);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The SABR model against Hagan's formula for it
+// ---------------------------------------------------------------------------------------------------
+
+void sabrModel(const std::filesystem::path& out, const models::UsdMarket& m) {
+    const market::SwaptionCube<double>& cube = m.cube;
+    auto find = [&](const std::vector<double>& axis, double v) {
+        for (std::size_t i = 0; i < axis.size(); ++i)
+            if (std::fabs(axis[i] - v) < 1e-9) return i;
+        throw InputError("sabrModel: node not on the cube axes");
+    };
+    Csv c(out, "sabr_mc.csv", "node,expiry,tenor,nu2t,offset_bp,strike_pct,hagan_bp,mc_bp,mc_se_bp,difference_bp,absorbed_pct");
+    for (const auto& [e, t] : {std::pair{1.0, 10.0}, std::pair{5.0, 10.0}, std::pair{10.0, 10.0}, std::pair{10.0, 30.0}}) {
+        const market::CubeNode<double>& node = cube.node(find(cube.expiries(), e), find(cube.tenors(), t));
+        std::vector<double> strikes;
+        for (int off = -200; off <= 200; off += 50)
+            if (node.forward + off * 1e-4 > 0.004) strikes.push_back(node.forward + off * 1e-4);
+        const vol::SabrMcResult r = vol::sabrMonteCarlo(node.sabr, node.forward, e, strikes, {.paths = 200000, .stepsPerYear = 100, .seed = 2026});
+        const std::string label = std::to_string(static_cast<int>(e)) + "Yx" + std::to_string(static_cast<int>(t)) + "Y";
+        for (const vol::SabrMcPoint& p : r.points)
+            std::fprintf(c.f, "%s,%.0f,%.0f,%.3f,%.0f,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f\n", label.c_str(), e, t, node.sabr.nu * node.sabr.nu * e, (p.strike - node.forward) * kBp,
+                         p.strike * 100.0, p.haganNormalVol * kBp, p.normalVol * kBp, p.normalVolError * kBp, (p.haganNormalVol - p.normalVol) * kBp, r.absorbed * 100.0);
+    }
+    // Euler convergence at the longest node: the time-stepping error must be below the effect measured.
+    Csv s(out, "sabr_mc_steps.csv", "steps_per_year,atm_mc_bp,atm_se_bp,minus150_mc_bp,minus150_se_bp");
+    const market::CubeNode<double>& node = cube.node(find(cube.expiries(), 10.0), find(cube.tenors(), 30.0));
+    for (int steps : {25, 50, 100, 200}) {
+        const vol::SabrMcResult r = vol::sabrMonteCarlo(node.sabr, node.forward, 10.0, {node.forward, node.forward - 0.015}, {.paths = 200000, .stepsPerYear = steps, .seed = 2026});
+        std::fprintf(s.f, "%d,%.3f,%.3f,%.3f,%.3f\n", steps, r.points[0].normalVol * kBp, r.points[0].normalVolError * kBp, r.points[1].normalVol * kBp, r.points[1].normalVolError * kBp);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Benchmark case for an independent library (tools/benchmark_quantlib.py)
 // ---------------------------------------------------------------------------------------------------
 
@@ -931,7 +1029,7 @@ void xvaSection(const std::filesystem::path& out, const models::UsdMarket& m) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: rl_analysis <output-dir> [section...]\n  sections: curves swaprisk vol lgm bermudan exposure twofactor smile benchmark cheyette kappa xva (default: all)\n");
+        std::fprintf(stderr, "usage: rl_analysis <output-dir> [section...]\n  sections: curves swaprisk vol lgm bermudan exposure twofactor smile benchmark cheyette sabrmc hedging kappa xva (default: all)\n");
         return 2;
     }
     try {
@@ -954,6 +1052,8 @@ int main(int argc, char** argv) {
         if (wanted("smile")) smileImpact(out, m);
         if (wanted("benchmark")) benchmark(out, m);
         if (wanted("cheyette")) cheyette(out, m);
+        if (wanted("sabrmc")) sabrModel(out, m);
+        if (wanted("hedging")) hedging(out, m);
         if (wanted("kappa")) meanReversion(out, m);
         if (wanted("xva")) xvaSection(out, m);
         return 0;
