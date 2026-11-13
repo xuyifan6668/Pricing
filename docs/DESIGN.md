@@ -113,6 +113,17 @@ belongs to the t-forward measure, so the condition carries the deflated bond as 
 second stochastic factor for credit: it needs a correlation nobody can calibrate here, and the question
 the section answers (how much does CVA move for a stated dependence) does not need it.
 
+**Section 12 tests against something the library did not build.** Every earlier check shares one author's
+conventions. QuantLib gets only dates, discount factors and two model parameters, so a shared mistake cannot pass;
+the first version found one (weekly discount factors missed the turn-of-year jumps). Hagan's formula is checked
+against a simulation of the SABR model, not against its own fit. The Bermudan's dependence on the smile is measured
+two ways that do not share code: re-calibrating LGM at other strikes, and a Cheyette model with a fitted skew.
+*Rejected:* adding QuantLib as a build dependency; it is a test-time tool, installed only to regenerate §12.1.
+
+**Bump sizes are chosen and tested, not defaulted.** A second difference amplifies noise by 1/h². The PDE grid
+moves with every re-calibration, so a ±1 bp gamma on the default grid has the wrong sign; the P&L explain uses a
+1600-step grid and ±10 bp for gamma, and its test checks that the residual after delta is second order.
+
 ## What was deliberately left out
 
 Python bindings, an Excel add-in, a parallel risk engine, a generic product/model registry, payoff

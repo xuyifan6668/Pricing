@@ -42,6 +42,10 @@ The PDE lies within two standard errors of both Monte Carlo bounds on every trad
 | CVA risk by adjoint | Delta of a swap's CVA to all 37 curve quotes in 2 ms: **about 140× faster** than bumping, exact to 2e-10. |
 | Two-factor exposure | The 10-year swap's CVA is the same under every factor correlation (30.5–30.8 bp: its swaptions are the calibration set); the book's netted CVA moves 15.0–15.6 bp and its gross CVA 91–103 bp. |
 | Wrong-way risk | Hazard rate tied to the rates state, CDS curve still repriced: a 10-year payer's CVA goes from 34.7 bp to 57.5 bp when a one-s.d. rise in rates multiplies the hazard by 1.65, and the receiver's falls from 32.4 to 17.4 bp. |
+| Independent benchmark | Swap, nine Europeans and the Bermudan rebuilt in QuantLib from dates and discount factors only: Europeans agree to 2e-5 bp, the Bermudan to 0.006 bp (QuantLib finite differences) and 0.06 bp (its lattice). |
+| Smile in the Bermudan | Calibrating LGM at the exercise boundary instead of the trade strike moves the price 16 bp. A Cheyette model with its skew fitted to the market's smile prices it at 459.0 bp, 1.2 bp from the trade-strike calibration. |
+| Hagan against the SABR model | Monte Carlo of the model itself with the cube's fitted parameters: Hagan overstates vol by 0.2–0.8 bp at 1 year, up to 2 bp at 10Y×10Y, and 16–41 bp at the stressed node, which fits perfectly. |
+| Hedging and P&L explain | Delta-hedging the Bermudan cuts P&L noise from 278 bp to 7.4 bp (daily), falling like √interval; hedging at the wrong vol loses exactly the mispricing. Delta, gamma and vega explain day-sized moves to within 0.6 bp. |
 
 ![Bermudan behaviour](docs/img/bermudan_behaviour.png)
 
@@ -61,6 +65,7 @@ The PDE lies within two standard errors of both Monte Carlo bounds on every trad
 | --- | --- | --- |
 | Multi-curve bootstrap | Turns quotes into discount and forward curves | Interpolation choice changes forwards between pillars; futures convexity is an input, not modelled |
 | SABR (Hagan expansion) | The smile at each cube node | Negative density at low strikes: a perfect fit is not an arbitrage-free smile |
+| Cheyette (quasi-Gaussian) with local vol | The Bermudan with a smile | One skew parameter: fits the smile's slope, not its curvature; Monte Carlo only, with time-stepping error |
 | LGM one-factor | Dynamics for the Bermudan | One factor: all rates perfectly correlated instantaneously; no smile of its own; mean reversion is not identified by the calibration set |
 | G2++ two-factor | The same Bermudan with rates allowed to decorrelate; CMS spread options; exposure | Levenberg–Marquardt can stop in a one-factor-like basin, so several starts are needed; the ATM matrix leaves the rate correlation loosely pinned compared with a spread option; no smile; Monte Carlo lower bound only for the Bermudan |
 
@@ -90,20 +95,20 @@ cpp/market       quotes, fixings, yield curves, swaption cube
 cpp/instruments  swaps, futures, basis swaps, swaptions; market conventions
 cpp/linear       pricing off the curves: leg PV, par rate, annuity
 cpp/bootstrap    global multi-curve solve, adjoint Jacobian, par risk
-cpp/vol          Bachelier / Black, SABR and its calibration, arbitrage check
-cpp/models       LGM one-factor and G2++ two-factor, swaption pricing under them, calibration
+cpp/vol          Bachelier / Black, SABR and its calibration, arbitrage check, SABR model by Monte Carlo
+cpp/models       LGM one-factor, G2++ two-factor and Cheyette, swaption pricing under them, calibration
 cpp/pricers      Bermudan by PDE / LSMC / Andersen–Broadie, Bermudan and CMS spread under G2++,
-                 exposure, risk ladders
+                 Bermudan under Cheyette, exposure, risk ladders, hedging simulation, P&L explain
 cpp/xva          credit curve from CDS, exposure engine (netting, collateral), CVA / DVA / FVA,
                  Bermudan exposure, CVA sensitivities, wrong-way risk
 cpp/examples     rl_analysis (every number in docs/RESULTS.md) and small demos
-tools            results generator, data generators
+tools            results generator, data generators, QuantLib benchmark
 notebooks        ten walk-throughs: dates, curves, vol, two factors and the spread option, exposure and
                  collateral, Bermudan exposure with CVA risk and wrong-way risk
 docs             RESULTS.md, DESIGN.md
 ```
 
-Each `cpp/` module depends only on the ones above it. About 400 C++ test cases and 61 Python tests; the
+Each `cpp/` module depends only on the ones above it. About 410 C++ test cases and 65 Python tests; the
 C++ suite also runs under AddressSanitizer and UBSan.
 
 ## Build and run
@@ -128,7 +133,7 @@ Windows (MSVC, with vcpkg and `VCPKG_ROOT` set):
 cmake --preset msvc-release && cmake --build --preset msvc-release && ctest --preset msvc-release
 ```
 
-Regenerate every table and plot in `docs/RESULTS.md` (about two minutes):
+Regenerate every table and plot in `docs/RESULTS.md` (a few minutes; add `--with QuantLib` for the benchmark in §12.1):
 
 ```bash
 uv run python tools/make_results.py
@@ -144,10 +149,10 @@ uv run python tools/make_results.py
   engine; the PDE, the upper bound and risk are one-factor only. The spread option is one payment with
   unit accrual, not a traded strip. Mean reversion in the one-factor model can be marked to a second
   strip (RESULTS §10).
-- **No smile in the model.** Both models are calibrated at the trade's strike. A Bermudan whose exercise boundary
+- **Little smile in the models.** Cheyette has one skew parameter; LGM and G2++ have none and are calibrated at the trade's strike. A Bermudan whose exercise boundary
   sits far from the strike sees vols the model was not calibrated to.
 - **SABR is Hagan's expansion as published.** Arbitrage at low strikes is detected and reported per node,
-  not repaired.
+  not repaired; the expansion's error against the model is measured (RESULTS §12.4), not corrected.
 - **Futures convexity adjustments are inputs**, not derived from the model.
 - **Single-curve in the model.** The LGM pricers handle SOFR swaps under SOFR discounting; the two-day
   payment lag is frozen at today's curve.
