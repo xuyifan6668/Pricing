@@ -672,6 +672,40 @@ void hedging(const std::filesystem::path& out, const models::UsdMarket& m) {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Bracketing the two-factor Bermudan, and attributing its difference from one factor
+// ---------------------------------------------------------------------------------------------------
+
+void bracket(const std::filesystem::path& out, const models::UsdMarket& m) {
+    using models::G2pp;
+    const instruments::Swap trade = swap(m, 10, 0.035);
+    models::G2ppFitOptions fo;
+    fo.kappa1 = 0.6;
+    fo.rho = -0.9;
+    const G2pp fitted = models::fitG2pp(models::makeAtmMatrix(m.asOf, m.curves, m.cube, {1, 2, 3, 5, 7, 10}, {1, 2, 5, 10, 20}), fo).model;
+    const G2pp flatShape(fitted.kappa1(), fitted.kappa2(), fitted.sigma1(), fitted.sigma2(), fitted.rho());
+    Csv c(out, "g2pp_bracket.csv", "model,rho,lower_bp,lower_se_bp,upper_bp,upper_se_bp,gap_bp,gap_se_bp");
+    auto row = [&](const char* name, const G2pp& shape) {
+        const pricers::CalibratedBermudanG2pp b = pricers::calibrateBermudanG2pp(m, trade, 1.0, 0, shape);
+        const pricers::G2ppLsmcResult lo = pricers::priceBermudanLsmcG2pp(b.calibration.model, b.rights, {.trainingPaths = 50000, .pricingPaths = 400000});
+        const pricers::G2ppUpperBoundResult up = pricers::priceBermudanUpperBoundG2pp(b.calibration.model, b.rights, lo, {.outerPaths = 1000, .innerPaths = 1000});
+        std::fprintf(c.f, "%s,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\n", name, shape.rho(), lo.lower * kBp, lo.standardError * kBp, up.upper * kBp, up.standardError * kBp, up.gap * kBp,
+                     up.gapStandardError * kBp);
+    };
+    row("two factors; second factor off", G2pp(kKappa, 1.0, 0.01, 0.0, 0.0));
+    row("two factors; fitted to the ATM matrix", flatShape);
+    row("two factors; fast factor, rho -0.9", G2pp(kKappa, 0.40, 0.01, 0.01, -0.9));
+    row("two factors; fast factor, rho +0.5", G2pp(kKappa, 0.40, 0.01, 0.01, 0.5));
+    // The one-factor references: the convention, and mean reversion marked to the 1Y-tenor strip.
+    std::vector<models::ExerciseRight> rights;
+    for (core::Date d : models::coterminalExerciseDates(trade, 1.0, 0, "USD-SIFMA")) rights.push_back(models::makeExerciseRight(trade, m.curves, d));
+    const auto strip = models::makeStrip(rights, m.cube);
+    const double marked = models::calibrateLgmMeanReversion(strip, models::makeAtmMatrix(m.asOf, m.curves, m.cube, {1, 2, 3, 4, 5, 6, 7, 8, 9}, {1})).kappa;
+    Csv r(out, "g2pp_bracket_lgm.csv", "model,kappa,pde_bp");
+    std::fprintf(r.f, "one factor; kappa 3%% (convention),%.5f,%.3f\n", kKappa, pricers::priceBermudanPde(pricers::calibrateBermudan(m, trade, 1.0, 0, kKappa).problem, pdeGrid(1600)).value * kBp);
+    std::fprintf(r.f, "one factor; kappa marked to the 1Y strip,%.5f,%.3f\n", marked, pricers::priceBermudanPde(pricers::calibrateBermudan(m, trade, 1.0, 0, marked).problem, pdeGrid(1600)).value * kBp);
+}
+
+// ---------------------------------------------------------------------------------------------------
 // The SABR model against Hagan's formula for it
 // ---------------------------------------------------------------------------------------------------
 
@@ -1029,7 +1063,7 @@ void xvaSection(const std::filesystem::path& out, const models::UsdMarket& m) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: rl_analysis <output-dir> [section...]\n  sections: curves swaprisk vol lgm bermudan exposure twofactor smile benchmark cheyette sabrmc hedging kappa xva (default: all)\n");
+        std::fprintf(stderr, "usage: rl_analysis <output-dir> [section...]\n  sections: curves swaprisk vol lgm bermudan exposure twofactor smile benchmark cheyette sabrmc hedging bracket kappa xva (default: all)\n");
         return 2;
     }
     try {
@@ -1054,6 +1088,7 @@ int main(int argc, char** argv) {
         if (wanted("cheyette")) cheyette(out, m);
         if (wanted("sabrmc")) sabrModel(out, m);
         if (wanted("hedging")) hedging(out, m);
+        if (wanted("bracket")) bracket(out, m);
         if (wanted("kappa")) meanReversion(out, m);
         if (wanted("xva")) xvaSection(out, m);
         return 0;

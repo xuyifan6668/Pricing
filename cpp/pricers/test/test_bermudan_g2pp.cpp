@@ -81,3 +81,27 @@ TEST_CASE("G2++ Bermudan: more exercise rights are worth more; the run is reprod
     CHECK_THROWS_AS(priceBermudanLsmcG2pp(b.calibration.model, {b.rights[3], b.rights[1]}), rl::InputError);
     CHECK_THROWS_AS(priceBermudanLsmcG2pp(b.calibration.model, {}), rl::InputError);
 }
+
+TEST_CASE("G2++ upper bound: brackets the one-factor PDE with the second factor off, and the gap is small", "[pricers][g2pp][upper]") {
+    const CalibratedBermudan one = bermudan10nc1(0.035, true, 0.03);
+    const double pde = priceBermudanPde(one.problem).value;
+    const CalibratedBermudanG2pp off = calibrateBermudanG2pp(usdMarket(), spotSwap(10, 0.035), 1.0, 0, models::G2pp(0.03, 1.0, 0.01, 0.0, 0.0));
+    const G2ppLsmcResult lo = priceBermudanLsmcG2pp(off.calibration.model, off.rights, {.trainingPaths = 20000, .pricingPaths = 40000});
+    // The nested estimate of each continuation value is noisy, and max() turns noise into upward bias:
+    // with too few inner paths the gap measures the inner simulation, not the rule.
+    const G2ppUpperBoundResult coarse = priceBermudanUpperBoundG2pp(off.calibration.model, off.rights, lo, {.outerPaths = 300, .innerPaths = 100});
+    const G2ppUpperBoundResult up = priceBermudanUpperBoundG2pp(off.calibration.model, off.rights, lo, {.outerPaths = 300, .innerPaths = 1000});
+    CHECK(coarse.gap > up.gap + 2.0 * coarse.gapStandardError);
+    INFO("lower " << lo.lower / kBp << " ± " << lo.standardError / kBp << ", upper " << up.upper / kBp << " ± " << up.standardError / kBp << ", PDE " << pde / kBp << " bp");
+    CHECK(up.gap >= -3.0 * up.gapStandardError);
+    CHECK(up.upper >= pde - 4.0 * up.standardError);
+    CHECK(up.gap < 1.0 * kBp);
+
+    // With a genuine second factor the rule regresses on both states and the gap stays small.
+    const CalibratedBermudanG2pp two = calibrateBermudanG2pp(usdMarket(), spotSwap(10, 0.035), 1.0, 0, kShape);
+    const G2ppLsmcResult lo2 = priceBermudanLsmcG2pp(two.calibration.model, two.rights, {.trainingPaths = 20000, .pricingPaths = 40000});
+    const G2ppUpperBoundResult up2 = priceBermudanUpperBoundG2pp(two.calibration.model, two.rights, lo2, {.outerPaths = 300, .innerPaths = 1000});
+    CHECK(up2.gap >= -3.0 * up2.gapStandardError);
+    CHECK(up2.gap < 1.0 * kBp);
+    CHECK_THROWS_AS(priceBermudanUpperBoundG2pp(two.calibration.model, {two.rights[0]}, lo2), rl::InputError);
+}

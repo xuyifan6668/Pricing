@@ -48,10 +48,35 @@ struct G2ppLsmcResult {
     double inSample = 0.0;      ///< the rule on its own training paths: biased high
     std::vector<double> exerciseProbability; ///< fraction of pricing paths exercised at each date
     std::vector<double> europeans;           ///< model price of the European with each single exercise date
+    /// The exercise rule: regression coefficients per date (empty: never exercise there) and the degree.
+    std::vector<std::vector<double>> coefficients;
+    int degree = 3;
 };
 
 /// Rights must be in increasing exercise time. Throws InputError otherwise.
 G2ppLsmcResult priceBermudanLsmcG2pp(const models::G2pp& model, const std::vector<models::ExerciseRight>& rights, const G2ppLsmcOptions& options = {});
+
+struct G2ppUpperBoundOptions {
+    std::size_t outerPaths = 400;
+    std::size_t innerPaths = 1000; ///< per outer path per exercise date; fewer biases the gap upward
+    std::uint64_t seed = 77;
+};
+
+struct G2ppUpperBoundResult {
+    double gap = 0.0;              ///< E[max_i (h_i − M_i)] with M_0 = the lower bound: the duality gap
+    double gapStandardError = 0.0;
+    double upper = 0.0;            ///< lower + gap
+    double standardError = 0.0;    ///< of `upper`
+};
+
+/// The Andersen–Broadie upper bound from the exercise rule in `lower`, as in bermudan_mc.hpp: the
+/// martingale is built from the rule's value process with continuation values estimated by nested
+/// simulation in both states. A small gap says the regression rule is close to optimal, so a
+/// difference between this price and a one-factor price is the model's, not the estimator's. The gap is
+/// biased upward by the noise in the nested estimates: 2.6 bp with 100 inner paths, 0.2 bp with 1000, on
+/// the reference trade with the second factor off.
+G2ppUpperBoundResult priceBermudanUpperBoundG2pp(const models::G2pp& model, const std::vector<models::ExerciseRight>& rights, const G2ppLsmcResult& lower,
+                                                 const G2ppUpperBoundOptions& options = {});
 
 /// A Bermudan with a two-factor model whose volatility scale is calibrated to its own co-terminal strip.
 struct CalibratedBermudanG2pp {

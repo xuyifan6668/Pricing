@@ -183,7 +183,68 @@ G2ppLsmcResult priceBermudanLsmcG2pp(const G2pp& model, const std::vector<models
     res.standardError = std::sqrt(std::max(sumSq / static_cast<double>(samples) - mean * mean, 0.0) / static_cast<double>(samples));
     const double paths = static_cast<double>(opt.antithetic ? 2 * samples : samples);
     for (std::size_t c : exercised) res.exerciseProbability.push_back(static_cast<double>(c) / paths);
+    res.coefficients = coefficients;
+    res.degree = opt.degree;
     return res;
+}
+
+G2ppUpperBoundResult priceBermudanUpperBoundG2pp(const G2pp& model, const std::vector<models::ExerciseRight>& rights, const G2ppLsmcResult& lower,
+                                                 const G2ppUpperBoundOptions& opt) {
+    const std::size_t n = rights.size();
+    RL_REQUIRE(n > 0 && lower.coefficients.size() == n, "priceBermudanUpperBoundG2pp: the exercise rule does not match the rights");
+    RL_REQUIRE(opt.outerPaths >= 10 && opt.innerPaths >= 10, "priceBermudanUpperBoundG2pp: need at least 10 outer and inner paths");
+    const std::vector<DateData> dates = prepare(model, rights);
+    std::vector<double> row;
+    auto exercise = [&](std::size_t i, double s1, double s2, double hv) {
+        if (hv <= 0.0) return false;
+        if (i + 1 == n) return true;
+        if (lower.coefficients[i].empty()) return false;
+        basis(dates[i], lower.degree, s1, s2, row);
+        double c = 0.0;
+        for (std::size_t k = 0; k < row.size(); ++k) c += lower.coefficients[i][k] * row[k];
+        return hv >= c;
+    };
+    // Value of following the rule from date `from` on, starting from the state at date from − 1.
+    auto follow = [&](std::size_t from, double s1, double s2, math::Rng& rng) {
+        for (std::size_t i = from; i < n; ++i) {
+            const double z1 = rng.gaussian(), z2 = rng.gaussian();
+            s1 += dates[i].a11 * z1;
+            s2 += dates[i].a21 * z1 + dates[i].a22 * z2;
+            const double hv = dates[i].exerciseValue(s1, s2);
+            if (exercise(i, s1, s2, hv)) return hv;
+        }
+        return 0.0;
+    };
+    math::Rng outer(opt.seed), inner(math::SeedPolicy::derive(opt.seed, 2));
+    double sum = 0.0, sumSq = 0.0;
+    for (std::size_t p = 0; p < opt.outerPaths; ++p) {
+        double s1 = 0.0, s2 = 0.0, m = 0.0, previousContinuation = 0.0, best = -1e300;
+        for (std::size_t i = 0; i < n; ++i) {
+            const double z1 = outer.gaussian(), z2 = outer.gaussian();
+            s1 += dates[i].a11 * z1;
+            s2 += dates[i].a21 * z1 + dates[i].a22 * z2;
+            const double h = dates[i].exerciseValue(s1, s2);
+            double continuation = 0.0;
+            if (i + 1 < n) {
+                for (std::size_t q = 0; q < opt.innerPaths; ++q) continuation += follow(i + 1, s1, s2, inner);
+                continuation /= static_cast<double>(opt.innerPaths);
+            }
+            const double L = exercise(i, s1, s2, h) ? h : continuation;
+            m += i == 0 ? L - lower.lower : L - previousContinuation;
+            previousContinuation = continuation;
+            best = std::max(best, h - lower.lower - m);
+        }
+        best = std::max(best, -lower.lower - m);
+        sum += best;
+        sumSq += best * best;
+    }
+    const double paths = static_cast<double>(opt.outerPaths);
+    G2ppUpperBoundResult r;
+    r.gap = sum / paths;
+    r.gapStandardError = std::sqrt(std::max(sumSq / paths - r.gap * r.gap, 0.0) / paths);
+    r.upper = lower.lower + r.gap;
+    r.standardError = std::sqrt(lower.standardError * lower.standardError + r.gapStandardError * r.gapStandardError);
+    return r;
 }
 
 CalibratedBermudanG2pp calibrateBermudanG2pp(const models::UsdMarket& market, const instruments::Swap& swap, double firstCallYears, int noticeDays,
