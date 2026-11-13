@@ -46,6 +46,9 @@ The PDE lies within two standard errors of both Monte Carlo bounds on every trad
 | Smile in the Bermudan | Calibrating LGM at the exercise boundary instead of the trade strike moves the price 16 bp. A Cheyette model with its skew fitted to the market's smile prices it at 459.0 bp, 1.2 bp from the trade-strike calibration. |
 | Hagan against the SABR model | Monte Carlo of the model itself with the cube's fitted parameters: Hagan overstates vol by 0.2–0.8 bp at 1 year, up to 2 bp at 10Y×10Y, and 16–41 bp at the stressed node, which fits perfectly. |
 | Hedging and P&L explain | Delta-hedging the Bermudan cuts P&L noise from 278 bp to 7.4 bp (daily), falling like √interval; hedging at the wrong vol loses exactly the mispricing. Delta, gamma and vega explain day-sized moves to within 0.6 bp. |
+| Two-factor Bermudan, bracketed | Andersen–Broadie upper bound under G2++: every two-factor price bracketed to about 0.4 bp, so the fitted model's 8 bp difference from the marked one-factor price is the model's, not the estimator's. |
+| Stress | The whole chain re-run in eight shocked markets (rates −250 to +500 bp, inverted curve, vol −35 to +60 bp): calibration exact, PDE inside the Monte Carlo bracket, engine CVA on the closed form. Below zero rates and for an inconsistent scenario it refuses rather than returning a number. |
+| Regression | A golden pack of 43 numbers from every layer, tied to a hash of the input data, checked on every build. |
 
 ![Bermudan behaviour](docs/img/bermudan_behaviour.png)
 
@@ -108,7 +111,7 @@ notebooks        ten walk-throughs: dates, curves, vol, two factors and the spre
 docs             RESULTS.md, DESIGN.md
 ```
 
-Each `cpp/` module depends only on the ones above it. About 410 C++ test cases and 65 Python tests; the
+Each `cpp/` module depends only on the ones above it. About 420 C++ test cases and 65 Python tests; the
 C++ suite also runs under AddressSanitizer and UBSan.
 
 ## Build and run

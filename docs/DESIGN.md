@@ -120,6 +120,15 @@ against a simulation of the SABR model, not against its own fit. The Bermudan's 
 two ways that do not share code: re-calibrating LGM at other strikes, and a Cheyette model with a fitted skew.
 *Rejected:* adding QuantLib as a build dependency; it is a test-time tool, installed only to regenerate §12.1.
 
+**Numbers are pinned as well as properties.** Property tests cannot see a change that keeps every identity
+and moves a price. `data/golden/regression.json` stores 43 numbers with per-entry tolerances and the hash of the
+inputs it was built from; it is regenerated only deliberately (`RL_UPDATE_GOLDEN=1`). Tolerances are loose enough
+for Monte Carlo to survive a different compiler's last bits and tight enough to catch any real change.
+
+**Scenarios move rates, not every quote.** A "parallel shift" of all 37 curve quotes also moves the basis
+spreads by the full amount; the stress suite found this when the bootstrap refused a +200 bp scenario.
+`pricers::ratesMove` shifts outright rates only, and the explain's parallel gamma uses it.
+
 **Bump sizes are chosen and tested, not defaulted.** A second difference amplifies noise by 1/h². The PDE grid
 moves with every re-calibration, so a ±1 bp gamma on the default grid has the wrong sign; the P&L explain uses a
 1600-step grid and ±10 bp for gamma, and its test checks that the residual after delta is second order.
