@@ -6,6 +6,7 @@
 #include "rl/models/g2pp_calibration.hpp"
 #include "rl/models/g2pp_swaption.hpp"
 #include "rl/models/lgm_calibration.hpp"
+#include "rl/pricers/exposure.hpp"
 #include "rl/xva/xva.hpp"
 #include "test_support.hpp"
 
@@ -18,6 +19,7 @@ using namespace rl;
 using namespace rl::xva;
 using namespace rl::xva::test;
 using Catch::Matchers::WithinAbs;
+using Catch::Matchers::WithinRel;
 
 namespace {
 const market::CurveSet<double>& curves() { return usdMarket().curves; }
@@ -216,4 +218,50 @@ TEST_CASE("Two-factor engine with collateral: residual exposure is positive and 
         CHECK(p.collateralisedEpe[i] > 0.0);
         CHECK(p.collateralisedEpe[i] < 0.5 * p.epe[i]);
     }
+}
+
+TEST_CASE("PFE: the engine's quantile matches the closed form for one swap", "[xva][engine][pfe]") {
+    // A swap's value is monotone in the state, so the 97.5% quantile of its positive exposure is its
+    // value at the matching quantile of the state: a closed form the simulated quantile must reproduce.
+    for (bool payer : {true, false}) {
+        const instruments::Swap swap = spotSwap(10, 0.035, payer);
+        const std::vector<pricers::ExposurePoint> exact = pricers::swapExposureProfile(model(), swap, curves());
+        const std::vector<double> times = periodStartTimes(swap, curves());
+        const ExposureProfile mc = simulateExposure(model(), {swap}, curves(), times, std::nullopt, {.paths = 40000, .quantile = 0.975});
+        REQUIRE(times.size() == exact.size() + 1);
+        for (std::size_t i = 2; i < times.size(); ++i) {
+            INFO("t = " << times[i] << ": engine " << mc.pfe[i] / 1e-4 << " bp, closed form " << exact[i - 1].potentialExposure / 1e-4 << " bp");
+            CHECK_THAT(times[i], WithinAbs(exact[i - 1].time, 1e-9));
+            // The sampling error of a 97.5% quantile from 40,000 draws is about 1.5% of its level here.
+            CHECK_THAT(mc.pfe[i], WithinRel(exact[i - 1].potentialExposure, 0.04));
+        }
+    }
+}
+
+TEST_CASE("Monte Carlo CVA: unbiased across seeds, and its error falls like one over root paths", "[xva][engine][convergence]") {
+    const instruments::Swap swap = spotSwap(10, 0.035);
+    const SwapExposure exact = swapExposureClosedForm(model(), swap, curves());
+    const HazardCurve hazard = counterpartyCurve();
+    const double truth = creditAdjustment(exact.times, exact.epe, hazard, 0.4);
+    auto spread = [&](std::size_t paths, double& mean) {
+        std::vector<double> cva;
+        for (std::uint64_t seed = 1; seed <= 12; ++seed) {
+            const ExposureProfile p = simulateExposure(model(), {swap}, curves(), exact.times, std::nullopt, {.paths = paths, .seed = seed});
+            cva.push_back(creditAdjustment(p.times, p.epe, hazard, 0.4));
+        }
+        mean = 0.0;
+        for (double v : cva) mean += v;
+        mean /= static_cast<double>(cva.size());
+        double var = 0.0;
+        for (double v : cva) var += (v - mean) * (v - mean);
+        return std::sqrt(var / static_cast<double>(cva.size() - 1));
+    };
+    double meanSmall = 0.0, meanLarge = 0.0;
+    const double sdSmall = spread(1000, meanSmall), sdLarge = spread(4000, meanLarge);
+    INFO("closed form " << truth / 1e-4 << " bp; 1,000 paths " << meanSmall / 1e-4 << " ± " << sdSmall / 1e-4 << "; 4,000 paths " << meanLarge / 1e-4 << " ± " << sdLarge / 1e-4);
+    // Unbiased: the seed average is within its own error of the closed form.
+    CHECK_THAT(meanSmall, WithinAbs(truth, 4.0 * sdSmall / std::sqrt(12.0)));
+    CHECK_THAT(meanLarge, WithinAbs(truth, 4.0 * sdLarge / std::sqrt(12.0)));
+    // Four times the paths: half the error (with twelve seeds the ratio itself is only known to about 30%).
+    CHECK_THAT(sdSmall / sdLarge, WithinAbs(2.0, 0.8));
 }
