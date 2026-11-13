@@ -16,7 +16,7 @@ using namespace rl::xva::test;
 using Catch::Matchers::WithinAbs;
 using Catch::Matchers::WithinRel;
 
-TEST_CASE("CS01: positive at every maturity, and the ladder adds up to a parallel shift", "[xva][risk]") {
+TEST_CASE("CS01: negative at the short end, positive at the long end; the ladder adds up to a parallel shift", "[xva][risk]") {
     const SwapExposure e = swapExposureClosedForm(model(), spotSwap(10, 0.035), usdMarket().curves);
     auto cva = [&](const HazardCurve& h) { return creditAdjustment(e.times, e.epe, h, 0.4); };
     const auto ladder = cs01Ladder(cdsQuotes(), 0.4, discount, cva);
@@ -33,8 +33,13 @@ TEST_CASE("CS01: positive at every maturity, and the ladder adds up to a paralle
     // below the CVA itself, but of its order.
     CHECK(parallel * 125.0 < cva(counterpartyCurve()));
     CHECK(parallel * 125.0 > 0.5 * cva(counterpartyCurve()));
-    // Bumping the last quote only moves default probability between the last two buckets and beyond.
-    CHECK(ladder.back().value > 0.0);
+    // Raising one short quote with the others held moves default probability FROM the later years, where
+    // the swap's exposure is, INTO the early years, where there is little: CVA falls. A hedge built from
+    // one CDS maturity would get the sign of the short end wrong.
+    CHECK(ladder[0].value < 0.0);
+    CHECK(ladder[1].value < 0.0);
+    CHECK(ladder[3].value > 0.0);
+    CHECK(ladder[4].value > 0.0);
 }
 
 TEST_CASE("Swap CVA delta: one adjoint sweep equals 37 bumps with the model held fixed", "[xva][risk]") {
