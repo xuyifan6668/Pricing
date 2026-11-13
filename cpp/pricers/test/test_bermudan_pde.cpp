@@ -216,3 +216,25 @@ TEST_CASE("Grid validation and insensitivity to the grid's width", "[pricers][pd
     bad.spaceSteps = 2;
     CHECK_THROWS(priceBermudanPde(b.problem, bad));
 }
+
+TEST_CASE("Calibration strike: the trade's own strike is the default; other strikes reprice their own swaptions", "[pricers][bermudan][smile]") {
+    const auto withRate = [](double k) { return spotSwap(10, k); };
+    const auto trade = spotSwap(10, 0.035);
+    const CalibratedBermudan base = bermudan10nc1();
+    const std::vector<double> own(base.problem.size(), 0.035);
+    const CalibratedBermudan same = calibrateBermudanAtStrikes(usdMarket(), trade, 1.0, 0, 0.03, withRate, own);
+    CHECK_THAT(priceBermudanPde(same.problem).value, WithinAbs(priceBermudanPde(base.problem).value, 1e-14));
+
+    // At the money: each calibration swaption is at its own forward, and is repriced there.
+    std::vector<double> atm;
+    for (const auto& r : base.problem.rights()) atm.push_back(r.forwardRate());
+    const CalibratedBermudan atTheMoney = calibrateBermudanAtStrikes(usdMarket(), trade, 1.0, 0, 0.03, withRate, atm);
+    CHECK(atTheMoney.calibration.ok);
+    CHECK(atTheMoney.calibration.maxAbsErrorBp < 1e-6);
+    for (std::size_t i = 0; i < atm.size(); ++i) CHECK_THAT(atTheMoney.calibration.rows[i].strike, WithinAbs(atm[i], 1e-15));
+    // The trade priced is unchanged: same rights, same strike. Only the model's variance differs.
+    for (std::size_t i = 0; i < atm.size(); ++i) CHECK_THAT(atTheMoney.problem.rights()[i].strike, WithinAbs(0.035, 1e-15));
+    // The market has a smile, so the two calibrations give different models and different prices.
+    CHECK(std::fabs(priceBermudanPde(atTheMoney.problem).value - priceBermudanPde(base.problem).value) > 1e-6);
+    CHECK_THROWS_AS(calibrateBermudanAtStrikes(usdMarket(), trade, 1.0, 0, 0.03, withRate, {0.035}), rl::InputError);
+}

@@ -57,4 +57,20 @@ CalibratedBermudan calibrateBermudan(const models::UsdMarket& market, const inst
     return CalibratedBermudan{std::move(problem), std::move(cal)};
 }
 
+CalibratedBermudan calibrateBermudanAtStrikes(const models::UsdMarket& market, const instruments::Swap& swap, double firstCallYears, int noticeDays, double kappa,
+                                              const std::function<instruments::Swap(double)>& withRate, const std::vector<double>& strikes) {
+    const std::vector<core::Date> dates = models::coterminalExerciseDates(swap, firstCallYears, noticeDays, "USD-SIFMA");
+    RL_REQUIRE(strikes.size() == dates.size(), "calibrateBermudanAtStrikes: need one calibration strike per exercise date");
+    std::vector<models::ExerciseRight> rights, calibrationRights;
+    for (std::size_t i = 0; i < dates.size(); ++i) {
+        rights.push_back(models::makeExerciseRight(swap, market.curves, dates[i]));
+        calibrationRights.push_back(models::makeExerciseRight(withRate(strikes[i]), market.curves, dates[i]));
+        RL_REQUIRE(std::fabs(calibrationRights.back().time - rights.back().time) < 1e-12, "calibrateBermudanAtStrikes: withRate changed the swap's dates");
+    }
+    // makeStrip reads each right's own strike off the smile, so the strip is at the requested strikes.
+    models::LgmCalibration cal = models::calibrateLgm(kappa, models::makeStrip(calibrationRights, market.cube));
+    BermudanProblem problem(cal.model, std::move(rights));
+    return CalibratedBermudan{std::move(problem), std::move(cal)};
+}
+
 } // namespace rl::pricers

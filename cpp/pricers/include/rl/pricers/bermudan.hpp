@@ -21,6 +21,7 @@
 #include "rl/models/usd_market.hpp"
 
 #include <cstddef>
+#include <functional>
 #include <vector>
 
 namespace rl::pricers {
@@ -67,5 +68,20 @@ struct CalibratedBermudan {
 /// Exercise rights from `swap` (annual call dates after `firstCallYears`, `noticeDays` business days
 /// of notice), strip from the market's cube at the swap's fixed rate, LGM bootstrapped at `kappa`.
 CalibratedBermudan calibrateBermudan(const models::UsdMarket& market, const instruments::Swap& swap, double firstCallYears, int noticeDays, double kappa);
+
+/// The same Bermudan with the model calibrated at OTHER strikes than the trade's own.
+///
+/// A Gaussian model has no smile, so it can be made to agree with the market at one strike per
+/// expiry and no more. The usual choice is the trade's fixed rate: each European the Bermudan
+/// contains is then repriced. But the exercise decision is made at the exercise boundary, which for
+/// an option worth holding lies well away from the strike, and there the model's vol is not the
+/// market's. Calibrating instead at the boundary (or at the money) and repricing the SAME trade
+/// measures how much the price depends on that choice: a number that would be zero if the market had
+/// no smile, and the size of the reserve a desk would hold against using a smile-less model.
+///
+/// `withRate(k)` must return the trade's swap with fixed rate k and everything else unchanged.
+/// `strikes[i]` is the calibration strike for exercise date i. The Bermudan priced is always `swap`.
+CalibratedBermudan calibrateBermudanAtStrikes(const models::UsdMarket& market, const instruments::Swap& swap, double firstCallYears, int noticeDays, double kappa,
+                                              const std::function<instruments::Swap(double)>& withRate, const std::vector<double>& strikes);
 
 } // namespace rl::pricers

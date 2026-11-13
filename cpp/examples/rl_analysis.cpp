@@ -40,6 +40,7 @@
 #include <functional>
 #include <iostream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using namespace rl;
@@ -503,6 +504,44 @@ void exposure(const std::filesystem::path& out, const models::UsdMarket& m) {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Smile: which strike is the model calibrated at?
+// ---------------------------------------------------------------------------------------------------
+
+void smileImpact(const std::filesystem::path& out, const models::UsdMarket& m) {
+    const auto withRate = [&](double k) { return swap(m, 10, k); };
+    Csv c(out, "smile_bermudan.csv", "trade,calibration,bermudan_bp,best_european_bp,max_strip_error_bp");
+    Csv d(out, "smile_strikes.csv", "trade,expiry,forward_pct,boundary_pct,vol_trade_strike_bp,vol_atm_bp,vol_boundary_bp");
+    for (const auto& [name, strike, payer] : {std::tuple{"payer 3.50%", 0.035, true}, std::tuple{"payer 4.50% (OTM)", 0.045, true}, std::tuple{"payer 2.50% (ITM)", 0.025, true}}) {
+        const instruments::Swap trade = swap(m, 10, strike, payer);
+        const CalibratedBermudan base = pricers::calibrateBermudan(m, trade, 1.0, 0, kKappa);
+        const std::size_t n = base.problem.size();
+        auto price = [&](const CalibratedBermudan& b) { return pricers::priceBermudanPde(b.problem, pdeGrid(800)); };
+        auto report = [&](const char* how, const CalibratedBermudan& b) {
+            const std::vector<double> e = b.problem.europeanValues();
+            std::fprintf(c.f, "%s,%s,%.3f,%.3f,%.1e\n", name, how, price(b).value * kBp, *std::max_element(e.begin(), e.end()) * kBp, b.calibration.maxAbsErrorBp);
+        };
+        report("trade strike", base);
+        std::vector<double> atm;
+        for (const auto& r : base.problem.rights()) atm.push_back(r.forwardRate());
+        const CalibratedBermudan atTheMoney = pricers::calibrateBermudanAtStrikes(m, trade, 1.0, 0, kKappa, withRate, atm);
+        report("at the money", atTheMoney);
+        // The exercise boundary depends on the model, which depends on the calibration strikes: iterate.
+        std::vector<double> boundary(n, strike);
+        CalibratedBermudan atBoundary = base;
+        for (int it = 0; it < 4; ++it) {
+            const std::vector<double> rate = price(atBoundary).boundaryRate;
+            for (std::size_t i = 0; i < n; ++i)
+                if (std::isfinite(rate[i])) boundary[i] = rate[i];
+            atBoundary = pricers::calibrateBermudanAtStrikes(m, trade, 1.0, 0, kKappa, withRate, boundary);
+        }
+        report("exercise boundary", atBoundary);
+        for (std::size_t i = 0; i < n; ++i)
+            std::fprintf(d.f, "%s,%.3f,%.4f,%.4f,%.3f,%.3f,%.3f\n", name, base.problem.rights()[i].time, atm[i] * 100.0, boundary[i] * 100.0, base.calibration.rows[i].marketVolBp,
+                         atTheMoney.calibration.rows[i].marketVolBp, atBoundary.calibration.rows[i].marketVolBp);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Marking the mean reversion
 // ---------------------------------------------------------------------------------------------------
 
@@ -774,7 +813,7 @@ void xvaSection(const std::filesystem::path& out, const models::UsdMarket& m) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: rl_analysis <output-dir> [section...]\n  sections: curves swaprisk vol lgm bermudan exposure twofactor kappa xva (default: all)\n");
+        std::fprintf(stderr, "usage: rl_analysis <output-dir> [section...]\n  sections: curves swaprisk vol lgm bermudan exposure twofactor smile kappa xva (default: all)\n");
         return 2;
     }
     try {
@@ -794,6 +833,7 @@ int main(int argc, char** argv) {
         if (wanted("bermudan")) bermudan(out, m);
         if (wanted("exposure")) exposure(out, m);
         if (wanted("twofactor")) twoFactor(out, m);
+        if (wanted("smile")) smileImpact(out, m);
         if (wanted("kappa")) meanReversion(out, m);
         if (wanted("xva")) xvaSection(out, m);
         return 0;
