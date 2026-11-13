@@ -542,6 +542,60 @@ void smileImpact(const std::filesystem::path& out, const models::UsdMarket& m) {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Benchmark case for an independent library (tools/benchmark_quantlib.py)
+// ---------------------------------------------------------------------------------------------------
+
+void benchmark(const std::filesystem::path& out, const models::UsdMarket& m) {
+    // A case another library can rebuild from dates alone: the standard SOFR swap without its two-day
+    // payment lag, Hull-White with constant volatility, and the discount curve handed over as discount
+    // factors on a dense grid. Everything else (accruals, forwards, annuities, the swaption formula,
+    // the lattice) is then the other library's own.
+    const double kappa = kKappa, sigma = 0.0090;
+    instruments::OisSwapConventions conv = instruments::Conventions::usdSofrOis();
+    conv.paymentLag = 0;
+    const market::YieldCurve<double>& disc = m.curves.discount();
+    // Weekly points plus every date the trades use, so the other library never has to interpolate
+    // where it matters (the curve here has turn-of-year jumps a generic interpolation would not know).
+    std::vector<core::Date> curveDates;
+    for (int d = 0; d <= 12 * 365; d += 7) curveDates.push_back(m.asOf + d);
+    Csv legs(out, "benchmark_legs.csv", "case,leg,accrual_start,accrual_end,payment,tau");
+    Csv cases(out, "benchmark_cases.csv", "case,payer,fixed_rate,kappa,sigma,swap_npv,par_rate,bermudan_pde,bermudan_lsmc,bermudan_lsmc_se");
+    Csv europeans(out, "benchmark_europeans.csv", "case,exercise_date,forward_rate,annuity,european");
+    const models::Lgm1F model = models::Lgm1F::constantSigma(kappa, sigma, 40.0);
+    int id = 0;
+    for (const auto& [rate, payer] : {std::pair{0.035, true}, std::pair{0.045, true}, std::pair{0.025, true}, std::pair{0.035, false}}) {
+        ++id;
+        const instruments::Swap trade =
+            instruments::OisSwapBuilder(conv, m.asOf).id("bench").tenor(core::Tenor::years(10)).fixedRate(rate).notional(1.0).payFixed(payer).build();
+        for (const auto& cf : trade.fixedLeg().cashflows()) {
+            const auto& k = std::get<instruments::FixedCoupon>(cf);
+            std::fprintf(legs.f, "%d,fixed,%s,%s,%s,%.17g\n", id, k.accrualStart.toIso().c_str(), k.accrualEnd.toIso().c_str(), k.payment.toIso().c_str(), k.tau);
+            curveDates.push_back(k.accrualStart);
+            curveDates.push_back(k.accrualEnd);
+        }
+        for (const auto& cf : trade.floatLeg().cashflows()) {
+            const auto& k = std::get<instruments::OvernightCoupon>(cf);
+            std::fprintf(legs.f, "%d,float,%s,%s,%s,%.17g\n", id, k.accrualStart.toIso().c_str(), k.accrualEnd.toIso().c_str(), k.payment.toIso().c_str(), k.tau);
+        }
+        std::vector<models::ExerciseRight> rights;
+        for (core::Date d : models::coterminalExerciseDates(trade, 1.0, 0, "USD-SIFMA")) rights.push_back(models::makeExerciseRight(trade, m.curves, d));
+        for (const auto& r : rights)
+            std::fprintf(europeans.f, "%d,%s,%.12f,%.12f,%.12f\n", id, r.date.toIso().c_str(), r.forwardRate(), r.annuityValue(), models::lgmSwaptionPrice(model, r));
+        const models::ExerciseRight whole = models::makeExerciseRight(trade, m.curves, std::get<instruments::FixedCoupon>(trade.fixedLeg().cashflows().front()).accrualStart);
+        const BermudanProblem problem(model, rights);
+        pricers::LsmcOptions lo;
+        lo.pricingPaths = 1000000;
+        const pricers::LsmcResult mc = pricers::priceBermudanLsmc(problem, lo);
+        std::fprintf(cases.f, "%d,%d,%.4f,%.4f,%.4f,%.12f,%.12f,%.12f,%.12f,%.3e\n", id, payer ? 1 : 0, rate, kappa, sigma, whole.forwardValue(), whole.forwardRate(),
+                     pricers::priceBermudanPde(problem, pdeGrid(1600)).value, mc.lower, mc.standardError);
+    }
+    std::sort(curveDates.begin(), curveDates.end());
+    curveDates.erase(std::unique(curveDates.begin(), curveDates.end()), curveDates.end());
+    Csv c(out, "benchmark_curve.csv", "date,discount_factor");
+    for (core::Date d : curveDates) std::fprintf(c.f, "%s,%.17g\n", d.toIso().c_str(), disc.df(d));
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Marking the mean reversion
 // ---------------------------------------------------------------------------------------------------
 
@@ -813,7 +867,7 @@ void xvaSection(const std::filesystem::path& out, const models::UsdMarket& m) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: rl_analysis <output-dir> [section...]\n  sections: curves swaprisk vol lgm bermudan exposure twofactor smile kappa xva (default: all)\n");
+        std::fprintf(stderr, "usage: rl_analysis <output-dir> [section...]\n  sections: curves swaprisk vol lgm bermudan exposure twofactor smile benchmark kappa xva (default: all)\n");
         return 2;
     }
     try {
@@ -834,6 +888,7 @@ int main(int argc, char** argv) {
         if (wanted("exposure")) exposure(out, m);
         if (wanted("twofactor")) twoFactor(out, m);
         if (wanted("smile")) smileImpact(out, m);
+        if (wanted("benchmark")) benchmark(out, m);
         if (wanted("kappa")) meanReversion(out, m);
         if (wanted("xva")) xvaSection(out, m);
         return 0;
