@@ -12,6 +12,7 @@ rl_add_module(
     src/conversion.cpp
     src/sabr_fit.cpp
     src/arbitrage.cpp
+    src/sabr_mc.cpp
   TEST_SOURCES
     test/test_bachelier.cpp
     test/test_black.cpp
@@ -20,4 +21,5 @@ rl_add_module(
     test/test_sabr_fit.cpp
     test/test_cube.cpp
     test/test_arbitrage.cpp
+    test/test_sabr_mc.cpp
 )

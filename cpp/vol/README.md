@@ -58,3 +58,10 @@ Everything else is closed forms with the source cited above the code.
 
 Pure functions of their inputs. `SabrNodeProblem` is immutable after construction, so nodes can be fitted in
 parallel with no shared state. The `Real` instantiations write to the calling thread's tape.
+
+## The SABR model, not the formula
+
+`sabr_mc.hpp` simulates SABR itself (α exact, the forward by Euler absorbed at zero, antithetic paths, the forward as
+a control variate) and reports implied normal vols beside Hagan's. Tested: Bachelier limit, agreement with Hagan at
+short expiry, martingale, reproducibility. RESULTS §12.4: Hagan overstates the model's vol by 0.2–2 bp up to
+10Y×10Y and by 16–41 bp at the stressed 10Y×30Y node.
