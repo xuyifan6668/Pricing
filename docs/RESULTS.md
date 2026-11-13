@@ -1000,28 +1000,29 @@ Hedging weekly with a model whose vol is wrong by a factor s, while the market m
 The sensitivities a risk system would report for the Bermudan (notional 1, in bp): total par delta
 2.748 per bp, parallel gamma 0.0168 per bp², vega 5.488 per bp of normal vol. Each market move is then
 revalued in full (re-bootstrap, re-fit the cube, re-calibrate, re-price) and the change attributed to delta (all 37
-par deltas against the move in each quote), gamma (parallel gamma against the average move) and vega. Ten day-sized
-random moves (parallel, twist of the curve's slope, parallel vol), then two stresses:
+par deltas against the move in each quote), gamma (parallel gamma against the average move) and vega. Moves shift
+the outright rate quotes (a parallel move and a twist of the slope) and every vol quote; basis spreads stay put. Ten
+day-sized random moves, then two stresses:
 
 | Scenario | Instrument | Actual (bp) | Delta | Gamma | Vega | Unexplained |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| day 1 | Bermudan | -9.64 | -15.73 | +0.52 | +5.67 | -0.10 |
-| day 2 | Bermudan | -17.72 | -28.86 | +0.69 | +10.18 | +0.27 |
-| day 3 | Bermudan | +0.35 | -7.73 | +0.17 | +7.94 | -0.03 |
+| day 1 | Bermudan | -9.64 | -15.73 | +0.57 | +5.67 | -0.15 |
+| day 2 | Bermudan | -17.72 | -28.86 | +0.66 | +10.18 | +0.30 |
+| day 3 | Bermudan | +0.35 | -7.73 | +0.19 | +7.94 | -0.05 |
 | day 4 | Bermudan | +10.40 | +5.64 | +0.01 | +4.75 | +0.00 |
-| day 5 | Bermudan | +12.78 | +14.70 | +0.30 | -2.14 | -0.08 |
-| day 6 | Bermudan | +45.16 | +47.19 | +1.58 | -4.22 | +0.60 |
+| day 5 | Bermudan | +12.78 | +14.70 | +0.31 | -2.14 | -0.09 |
+| day 6 | Bermudan | +45.16 | +47.19 | +1.46 | -4.22 | +0.73 |
 | day 7 | Bermudan | +12.73 | +3.60 | +0.04 | +9.14 | -0.05 |
-| day 8 | Bermudan | -37.48 | -34.24 | +0.87 | -4.50 | +0.39 |
+| day 8 | Bermudan | -37.48 | -34.24 | +0.81 | -4.50 | +0.45 |
 | day 9 | Bermudan | -17.31 | -7.85 | +0.02 | -9.52 | +0.05 |
-| day 10 | Bermudan | +3.45 | +7.02 | +0.03 | -3.60 | -0.00 |
+| day 10 | Bermudan | +3.45 | +7.02 | +0.03 | -3.60 | +0.00 |
 | stress: rates +50; vol +5 | Bermudan | +184.45 | +137.39 | +21.00 | +27.44 | -1.38 |
-| stress: rates -50; steepener 20; vol +10 | Bermudan | -52.43 | -125.63 | +23.02 | +54.88 | -4.70 |
+| stress: rates -50; steepener 20; vol +10 | Bermudan | -52.43 | -125.63 | +23.99 | +54.88 | -5.66 |
 
-- **On day-sized moves the explain works:** the Bermudan's unexplained P&L is at most 0.60 bp against moves of up to
-  45 bp, and the swap's at most 0.05 bp. Vega is often as large as delta for the Bermudan, which is why a
+- **On day-sized moves the explain works:** the Bermudan's unexplained P&L is at most 0.73 bp against moves of up to
+  45 bp, and the swap's at most 0.12 bp. Vega is often as large as delta for the Bermudan, which is why a
   rates-only explain of an option book fails.
-- **Under stress it degrades.** In the scenario "stress: rates -50; steepener 20; vol +10", -4.7 bp of -52.4 bp is unexplained.
+- **Under stress it degrades.** In the scenario "stress: rates -50; steepener 20; vol +10", -5.7 bp of -52.4 bp is unexplained.
   The explain has no rates–vol cross-gamma (vanna) and applies parallel gamma to the average move, so it misses
   the curvature of a twist; which of the two dominates here is not measured.
 - **Bump sizes are part of the method.** Gamma is a second difference: on the default 400-step PDE grid a ±1 bp
@@ -1029,3 +1030,72 @@ random moves (parallel, twist of the curve's slope, parallel vol), then two stre
   few thousandths of a basis point. The explain uses a 1600-step grid and a ±10 bp bump for gamma; the test
   `P&L explain: delta leaves a second-order residual, ...` checks that the residual after delta is second order
   and that gamma removes most of it.
+
+### 12.7 The two-factor Bermudan, bracketed
+
+Section 9.3 priced the Bermudan under G2++ with a Longstaff–Schwartz lower bound only. A lower bound alone cannot
+separate the model from the estimator: a sub-optimal exercise rule also lowers the price. The Andersen–Broadie upper
+bound now runs in both states (nested simulation, 1,000 outer and 1,000 inner paths), from the same rule.
+
+| Model | ρ | Lower bound (bp) | Upper bound (bp) | Duality gap (bp) |
+| --- | ---: | ---: | ---: | ---: |
+| Two factors; second factor off | +0.00 | 457.41 ± 0.50 | 457.68 ± 0.51 | 0.27 ± 0.07 |
+| Two factors; fitted to the ATM matrix | -0.72 | 434.83 ± 0.52 | 435.25 ± 0.52 | 0.43 ± 0.09 |
+| Two factors; fast factor; rho -0.9 | -0.90 | 417.28 ± 0.51 | 417.59 ± 0.51 | 0.31 ± 0.06 |
+| Two factors; fast factor; rho +0.5 | +0.50 | 483.32 ± 0.51 | 483.70 ± 0.52 | 0.38 ± 0.08 |
+
+One-factor references: 457.810 bp at κ = 3% (the convention), and 443.31 bp with κ marked to the 1Y-tenor strip
+(κ = -0.05%, section 10).
+
+- **Every two-factor price is bracketed to about half a basis point**, so the exercise rule is close to optimal in
+  both states.
+- **The fitted two-factor Bermudan is 434.8–435.3 bp; the one-factor model with marked mean reversion gives
+  443.3 bp.** The 8 bp between them is the second factor's, not the estimator's. Its sign is not
+  universal: under the fitted, negatively correlated shape the second factor lowers the price, and under a
+  positively correlated one (last row) it raises it, as section 9.3 found.
+- **The gap is biased upward by the inner simulation.** Each continuation value is a nested Monte Carlo estimate,
+  and the maximum turns its noise into upward bias: on the reference trade with the second factor off the gap is
+  2.6 bp with 100 inner paths and 0.2 bp with 1,000. The test `G2++ upper bound: ...` checks that it shrinks.
+
+### 12.8 Stress: the whole chain in shocked markets
+
+Every earlier result uses one calm market. Here the chain is re-run in eight: rates moved in parallel by up to
++500 bp and −250 bp, an inverted curve, vols up 60 bp and down 35 bp, and a combined move. In each, the curve is
+re-bootstrapped and the cube refitted; a 10nc1 payer struck at that market's own 10-year par rate is calibrated,
+priced by PDE and bracketed by Monte Carlo; and the exposure engine is checked against the closed form.
+
+| Scenario | 10Y par % | 5Y×10Y ATM vol (bp) | LSMC lower (bp) | PDE (bp) | Upper (bp) | Strip error (bp) | Swap CVA, closed form (bp) | Swap CVA, engine (bp) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| base | 3.4500 | 81 | 472.5 | 473.2 | 472.9 | 6.3e-13 | 31.82 | 31.92 |
+| rates +200 bp | 5.4500 | 81 | 416.4 | 417.1 | 416.8 | 1.2e-12 | 27.66 | 27.74 |
+| rates +500 bp | 8.4500 | 81 | 344.6 | 345.3 | 344.9 | 1.5e-12 | 22.44 | 22.51 |
+| rates -250 bp | 0.9500 | 81 | 540.8 | 541.5 | 541.3 | 1.1e-12 | 37.20 | 37.33 |
+| inverted curve | 3.6973 | 81 | 343.3 | 343.9 | 343.6 | 8.4e-13 | 19.91 | 20.01 |
+| vol +60 bp | 3.4500 | 141 | 804.3 | 805.7 | 805.0 | 1.9e-12 | 52.82 | 52.92 |
+| vol -35 bp | 3.4500 | 46 | 281.9 | 282.4 | 282.2 | 1.1e-12 | 19.63 | 19.72 |
+| rates +150 bp; vol +40 bp | 4.9500 | 121 | 630.6 | 631.7 | 631.1 | 6.7e-13 | 41.21 | 41.30 |
+
+- **The chain holds everywhere**: calibration reprices to 1e-12 bp, the PDE lies within 1.5 standard errors of the Monte
+  Carlo bracket, and the engine's CVA matches the closed form. The test `Stress: the chain holds together in shocked
+  markets` asserts all of this in every scenario.
+- The PDE sits on the same side of the bracket in every row. That is not a bias: the scenarios use the same random
+  numbers, so their Monte Carlo errors move together. Common random numbers make DIFFERENCES between scenarios
+  precise, and make agreement across scenarios no extra evidence.
+- **Where the chain cannot work, it refuses.** Below zero rates the cube's unshifted β = 0.5 SABR is undefined, and
+  calibration throws instead of returning a number. And the first version of these scenarios shifted every curve
+  quote by the full amount, basis spreads included, turning the −4 bp Fed Funds–SOFR basis into +196 bp: the
+  bootstrap rightly failed to converge. Scenarios now move outright rates only (`pricers::ratesMove`), and both
+  refusals are tested.
+
+### 12.9 Tests that pin the numbers
+
+The tests above check properties. Three kinds of check now pin numbers and behaviour that properties cannot:
+
+- **A golden regression pack** (`data/golden/regression.json`, test `Golden regression pack: ...`): 43 numbers from
+  every layer, from discount factors to the wrong-way CVA, each with its own tolerance (1e-11 for closed forms, 1e-9
+  for deterministic numerics, 1e-7 for Monte Carlo with fixed seeds), tied to a hash of the input data. A change that
+  keeps every identity but moves a price fails here, and the pack is regenerated only on purpose.
+- **PFE against its closed form**: the engine's 97.5% quantile of a swap's exposure matches the value of the swap at
+  the matching quantile of the state, on every coupon date. Before, PFE was only checked to be at least EPE.
+- **Monte Carlo behaviour across seeds**: over 12 seeds the engine's CVA is unbiased against the swaption strip, and
+  its spread halves when paths quadruple. A single fixed seed cannot show either.

@@ -32,6 +32,7 @@
 #include "rl/xva/exposure_engine.hpp"
 #include "rl/xva/wrong_way.hpp"
 #include "rl/xva/xva.hpp"
+#include "rl/vol/cube.hpp"
 #include "rl/vol/sabr.hpp"
 #include "rl/vol/sabr_mc.hpp"
 
@@ -645,15 +646,7 @@ void hedging(const std::filesystem::path& out, const models::UsdMarket& m) {
     }
     // Scenarios: a parallel move and a twist (long end against short end, by pillar maturity), and a
     // parallel vol move; ten day-sized draws, then two stresses.
-    const std::size_t n = m.problem.size();
-    std::vector<double> tenor(n);
-    for (std::size_t i = 0; i < n; ++i) tenor[i] = m.curves.discount().time(m.problem.instruments()[i].maturity);
-    auto scenario = [&](double parallel, double twist, double vol) {
-        pricers::MarketMove mv;
-        for (std::size_t i = 0; i < n; ++i) mv.quoteShiftBp.push_back(parallel + twist * (std::min(tenor[i], 30.0) - 10.0) / 20.0);
-        mv.volShiftBp = vol;
-        return mv;
-    };
+    auto scenario = [&](double parallel, double twist, double vol) { return pricers::ratesMove(m, parallel, twist, vol); };
     Csv e(out, "pnl_explain.csv", "scenario,parallel_bp,twist_bp,vol_bp,instrument,actual_bp,delta_bp,gamma_bp,vega_bp,unexplained_bp");
     math::Rng rng(7);
     std::vector<std::tuple<std::string, double, double, double>> moves;
@@ -693,8 +686,8 @@ void bracket(const std::filesystem::path& out, const models::UsdMarket& m) {
     };
     row("two factors; second factor off", G2pp(kKappa, 1.0, 0.01, 0.0, 0.0));
     row("two factors; fitted to the ATM matrix", flatShape);
-    row("two factors; fast factor, rho -0.9", G2pp(kKappa, 0.40, 0.01, 0.01, -0.9));
-    row("two factors; fast factor, rho +0.5", G2pp(kKappa, 0.40, 0.01, 0.01, 0.5));
+    row("two factors; fast factor; rho -0.9", G2pp(kKappa, 0.40, 0.01, 0.01, -0.9));
+    row("two factors; fast factor; rho +0.5", G2pp(kKappa, 0.40, 0.01, 0.01, 0.5));
     // The one-factor references: the convention, and mean reversion marked to the 1Y-tenor strip.
     std::vector<models::ExerciseRight> rights;
     for (core::Date d : models::coterminalExerciseDates(trade, 1.0, 0, "USD-SIFMA")) rights.push_back(models::makeExerciseRight(trade, m.curves, d));
@@ -703,6 +696,41 @@ void bracket(const std::filesystem::path& out, const models::UsdMarket& m) {
     Csv r(out, "g2pp_bracket_lgm.csv", "model,kappa,pde_bp");
     std::fprintf(r.f, "one factor; kappa 3%% (convention),%.5f,%.3f\n", kKappa, pricers::priceBermudanPde(pricers::calibrateBermudan(m, trade, 1.0, 0, kKappa).problem, pdeGrid(1600)).value * kBp);
     std::fprintf(r.f, "one factor; kappa marked to the 1Y strip,%.5f,%.3f\n", marked, pricers::priceBermudanPde(pricers::calibrateBermudan(m, trade, 1.0, 0, marked).problem, pdeGrid(1600)).value * kBp);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Stress: the whole chain in shocked markets
+// ---------------------------------------------------------------------------------------------------
+
+void stress(const std::filesystem::path& out, const models::UsdMarket& m) {
+    Csv c(out, "stress.csv", "scenario,par_rate_pct,atm_vol_5y_bp,european_max_bp,lsmc_bp,lsmc_se_bp,pde_bp,upper_bp,upper_se_bp,strip_error_bp,swap_cva_bp,engine_cva_bp");
+    const auto hazard = xva::HazardCurve::bootstrap({{1.0, 0.0080}, {3.0, 0.0105}, {5.0, 0.0125}, {7.0, 0.0140}, {10.0, 0.0150}}, 0.4,
+                                                    [&](double t) { return m.curves.discount().df(t); });
+    const struct {
+        const char* name;
+        double parallel, slope, vol;
+    } scenarios[] = {{"base", 0, 0, 0},           {"rates +200 bp", 200, 0, 0}, {"rates +500 bp", 500, 0, 0}, {"rates -250 bp", -250, 0, 0},
+                     {"inverted curve", 25, -250, 0}, {"vol +60 bp", 0, 0, 60},     {"vol -35 bp", 0, 0, -35},   {"rates +150 bp; vol +40 bp", 150, 0, 40}};
+    for (const auto& sc : scenarios) {
+        const models::UsdMarket s = pricers::applyMove(m, pricers::ratesMove(m, sc.parallel, sc.slope, sc.vol));
+        const instruments::Swap probe = swap(s, 10, 0.035);
+        const double strike = models::makeExerciseRight(probe, s.curves, std::get<instruments::FixedCoupon>(probe.fixedLeg().cashflows().front()).accrualStart).forwardRate();
+        const instruments::Swap trade = swap(s, 10, strike);
+        const CalibratedBermudan b = pricers::calibrateBermudan(s, trade, 1.0, 0, kKappa);
+        const std::vector<double> eu = b.problem.europeanValues();
+        pricers::LsmcOptions lo;
+        lo.pricingPaths = 400000;
+        const pricers::LsmcResult low = pricers::priceBermudanLsmc(b.problem, lo);
+        const pricers::UpperBoundResult up = pricers::priceBermudanUpperBound(b.problem, low);
+        const xva::SwapExposure exact = xva::swapExposureClosedForm(b.problem.model(), trade, s.curves);
+        xva::ExposureOptions eo;
+        eo.paths = 20000;
+        const xva::ExposureProfile mc = xva::simulateExposure(b.problem.model(), {trade}, s.curves, exact.times, std::nullopt, eo);
+        std::fprintf(c.f, "%s,%.4f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.1e,%.3f,%.3f\n", sc.name, strike * 100.0, vol::cubeAtmNormalVol<double>(s.cube, 5.0, 10.0) * kBp,
+                     *std::max_element(eu.begin(), eu.end()) * kBp, low.lower * kBp, low.standardError * kBp, pricers::priceBermudanPde(b.problem, pdeGrid(800)).value * kBp,
+                     up.upper * kBp, up.standardError * kBp, b.calibration.maxAbsErrorBp, xva::creditAdjustment(exact.times, exact.epe, hazard, 0.4) * kBp,
+                     xva::creditAdjustment(mc.times, mc.epe, hazard, 0.4) * kBp);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -1063,7 +1091,7 @@ void xvaSection(const std::filesystem::path& out, const models::UsdMarket& m) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: rl_analysis <output-dir> [section...]\n  sections: curves swaprisk vol lgm bermudan exposure twofactor smile benchmark cheyette sabrmc hedging bracket kappa xva (default: all)\n");
+        std::fprintf(stderr, "usage: rl_analysis <output-dir> [section...]\n  sections: curves swaprisk vol lgm bermudan exposure twofactor smile benchmark cheyette sabrmc hedging bracket stress kappa xva (default: all)\n");
         return 2;
     }
     try {
@@ -1089,6 +1117,7 @@ int main(int argc, char** argv) {
         if (wanted("sabrmc")) sabrModel(out, m);
         if (wanted("hedging")) hedging(out, m);
         if (wanted("bracket")) bracket(out, m);
+        if (wanted("stress")) stress(out, m);
         if (wanted("kappa")) meanReversion(out, m);
         if (wanted("xva")) xvaSection(out, m);
         return 0;

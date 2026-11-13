@@ -1322,8 +1322,9 @@ Hedging weekly with a model whose vol is wrong by a factor s, while the market m
 The sensitivities a risk system would report for the Bermudan (notional 1, in bp): total par delta
 {float(b['total_delta_bp_per_bp']):.3f} per bp, parallel gamma {float(b['parallel_gamma_bp_per_bp2']):.4f} per bp², vega {float(b['vega_bp_per_bp']):.3f} per bp of normal vol. Each market move is then
 revalued in full (re-bootstrap, re-fit the cube, re-calibrate, re-price) and the change attributed to delta (all 37
-par deltas against the move in each quote), gamma (parallel gamma against the average move) and vega. Ten day-sized
-random moves (parallel, twist of the curve's slope, parallel vol), then two stresses:
+par deltas against the move in each quote), gamma (parallel gamma against the average move) and vega. Moves shift
+the outright rate quotes (a parallel move and a twist of the slope) and every vol quote; basis spreads stay put. Ten
+day-sized random moves, then two stresses:
 
 {table(["Scenario", "Instrument", "Actual (bp)", "Delta", "Gamma", "Vega", "Unexplained"], body, "llrrrrr")}
 
@@ -1338,6 +1339,73 @@ random moves (parallel, twist of the curve's slope, parallel vol), then two stre
   few thousandths of a basis point. The explain uses a 1600-step grid and a ±10 bp bump for gamma; the test
   `P&L explain: delta leaves a second-order residual, ...` checks that the residual after delta is second order
   and that gamma removes most of it.
+""")
+    # 12.7 Bracketing the two-factor Bermudan
+    br = read(res, "g2pp_bracket")
+    lg = read(res, "g2pp_bracket_lgm")
+    body = [[r["model"][0].upper() + r["model"][1:], f"{float(r['rho']):+.2f}", f"{float(r['lower_bp']):.2f} ± {float(r['lower_se_bp']):.2f}", f"{float(r['upper_bp']):.2f} ± {float(r['upper_se_bp']):.2f}", f"{float(r['gap_bp']):.2f} ± {float(r['gap_se_bp']):.2f}"] for r in br]
+    fitted = next(r for r in br if "fitted" in r["model"])
+    marked = next(r for r in lg if "marked" in r["model"])
+    conv = next(r for r in lg if "convention" in r["model"])
+    parts.append(f"""### 12.7 The two-factor Bermudan, bracketed
+
+Section 9.3 priced the Bermudan under G2++ with a Longstaff–Schwartz lower bound only. A lower bound alone cannot
+separate the model from the estimator: a sub-optimal exercise rule also lowers the price. The Andersen–Broadie upper
+bound now runs in both states (nested simulation, 1,000 outer and 1,000 inner paths), from the same rule.
+
+{table(["Model", "ρ", "Lower bound (bp)", "Upper bound (bp)", "Duality gap (bp)"], body, "lrrrr")}
+
+One-factor references: {conv['pde_bp']} bp at κ = 3% (the convention), and {float(marked['pde_bp']):.2f} bp with κ marked to the 1Y-tenor strip
+(κ = {float(marked['kappa']):.2%}, section 10).
+
+- **Every two-factor price is bracketed to about half a basis point**, so the exercise rule is close to optimal in
+  both states.
+- **The fitted two-factor Bermudan is {float(fitted['lower_bp']):.1f}–{float(fitted['upper_bp']):.1f} bp; the one-factor model with marked mean reversion gives
+  {float(marked['pde_bp']):.1f} bp.** The {float(marked['pde_bp']) - float(fitted['upper_bp']):.0f} bp between them is the second factor's, not the estimator's. Its sign is not
+  universal: under the fitted, negatively correlated shape the second factor lowers the price, and under a
+  positively correlated one (last row) it raises it, as section 9.3 found.
+- **The gap is biased upward by the inner simulation.** Each continuation value is a nested Monte Carlo estimate,
+  and the maximum turns its noise into upward bias: on the reference trade with the second factor off the gap is
+  2.6 bp with 100 inner paths and 0.2 bp with 1,000. The test `G2++ upper bound: ...` checks that it shrinks.
+""")
+
+    # 12.8 Stress
+    stv = read(res, "stress")
+    body = [[r["scenario"], r["par_rate_pct"], f"{float(r['atm_vol_5y_bp']):.0f}", f"{float(r['lsmc_bp']):.1f}", f"{float(r['pde_bp']):.1f}", f"{float(r['upper_bp']):.1f}", r["strip_error_bp"], f"{float(r['swap_cva_bp']):.2f}", f"{float(r['engine_cva_bp']):.2f}"] for r in stv]
+    worst_out = max(max(float(r["lsmc_bp"]) - float(r["pde_bp"]), float(r["pde_bp"]) - float(r["upper_bp"])) / float(r["upper_se_bp"]) for r in stv)
+    parts.append(f"""### 12.8 Stress: the whole chain in shocked markets
+
+Every earlier result uses one calm market. Here the chain is re-run in eight: rates moved in parallel by up to
++500 bp and −250 bp, an inverted curve, vols up 60 bp and down 35 bp, and a combined move. In each, the curve is
+re-bootstrapped and the cube refitted; a 10nc1 payer struck at that market's own 10-year par rate is calibrated,
+priced by PDE and bracketed by Monte Carlo; and the exposure engine is checked against the closed form.
+
+{table(["Scenario", "10Y par %", "5Y×10Y ATM vol (bp)", "LSMC lower (bp)", "PDE (bp)", "Upper (bp)", "Strip error (bp)", "Swap CVA, closed form (bp)", "Swap CVA, engine (bp)"], body, "lrrrrrrrr")}
+
+- **The chain holds everywhere**: calibration reprices to 1e-12 bp, the PDE lies within {worst_out:.1f} standard errors of the Monte
+  Carlo bracket, and the engine's CVA matches the closed form. The test `Stress: the chain holds together in shocked
+  markets` asserts all of this in every scenario.
+- The PDE sits on the same side of the bracket in every row. That is not a bias: the scenarios use the same random
+  numbers, so their Monte Carlo errors move together. Common random numbers make DIFFERENCES between scenarios
+  precise, and make agreement across scenarios no extra evidence.
+- **Where the chain cannot work, it refuses.** Below zero rates the cube's unshifted β = 0.5 SABR is undefined, and
+  calibration throws instead of returning a number. And the first version of these scenarios shifted every curve
+  quote by the full amount, basis spreads included, turning the −4 bp Fed Funds–SOFR basis into +196 bp: the
+  bootstrap rightly failed to converge. Scenarios now move outright rates only (`pricers::ratesMove`), and both
+  refusals are tested.
+
+### 12.9 Tests that pin the numbers
+
+The tests above check properties. Three kinds of check now pin numbers and behaviour that properties cannot:
+
+- **A golden regression pack** (`data/golden/regression.json`, test `Golden regression pack: ...`): 43 numbers from
+  every layer, from discount factors to the wrong-way CVA, each with its own tolerance (1e-11 for closed forms, 1e-9
+  for deterministic numerics, 1e-7 for Monte Carlo with fixed seeds), tied to a hash of the input data. A change that
+  keeps every identity but moves a price fails here, and the pack is regenerated only on purpose.
+- **PFE against its closed form**: the engine's 97.5% quantile of a swap's exposure matches the value of the swap at
+  the matching quantile of the state, on every coupon date. Before, PFE was only checked to be at least EPE.
+- **Monte Carlo behaviour across seeds**: over 12 seeds the engine's CVA is unbiased against the swaption strip, and
+  its spread halves when paths quadruple. A single fixed seed cannot show either.
 """)
     return "\n".join(parts)
 
