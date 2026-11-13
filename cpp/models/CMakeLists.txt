@@ -13,6 +13,7 @@ rl_add_module(
     src/g2pp.cpp
     src/g2pp_swaption.cpp
     src/g2pp_calibration.cpp
+    src/cheyette.cpp
   TEST_SOURCES
     test/test_lgm.cpp
     test/test_flows.cpp

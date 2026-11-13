@@ -20,6 +20,7 @@
 #include "rl/pricers/bermudan_g2pp.hpp"
 #include "rl/pricers/bermudan_mc.hpp"
 #include "rl/pricers/bermudan_pde.hpp"
+#include "rl/pricers/cheyette_mc.hpp"
 #include "rl/pricers/cms_spread.hpp"
 #include "rl/pricers/exposure.hpp"
 #include "rl/pricers/risk.hpp"
@@ -542,6 +543,69 @@ void smileImpact(const std::filesystem::path& out, const models::UsdMarket& m) {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// A model with a smile: Cheyette with local volatility
+// ---------------------------------------------------------------------------------------------------
+
+void cheyette(const std::filesystem::path& out, const models::UsdMarket& m) {
+    const instruments::Swap trade = swap(m, 10, 0.035);
+    std::vector<models::ExerciseRight> rights;
+    for (core::Date d : models::coterminalExerciseDates(trade, 1.0, 0, "USD-SIFMA")) rights.push_back(models::makeExerciseRight(trade, m.curves, d));
+    const auto strip = models::makeStrip(rights, m.cube);
+    // The smile the skew is measured on: the 5-year expiry of the trade's own underlying, ±100 bp.
+    const std::size_t node = 4;
+    const double fwd = rights[node].forwardRate();
+    std::vector<models::ExerciseRight> smileRights;
+    for (double k : {fwd - 0.01, fwd - 0.005, fwd, fwd + 0.005, fwd + 0.01}) smileRights.push_back(models::makeExerciseRight(swap(m, 10, k), m.curves, rights[node].date));
+    const auto market = models::makeStrip(smileRights, m.cube);
+    const pricers::CheyetteOptions cal{.paths = 60000, .stepsPerYear = 24, .seed = 2026};
+    const pricers::CheyetteOptions fresh{.paths = 200000, .stepsPerYear = 24, .seed = 77};
+    const pricers::CheyetteLsmcOptions lsmc{.trainingPaths = 60000, .pricing = fresh, .degree = 3};
+
+    Csv sm(out, "cheyette_smile.csv", "skew,strike_offset_bp,market_vol_bp,model_vol_bp");
+    Csv sc(out, "cheyette_scan.csv", "skew,model_skew_bp,market_skew_bp,bermudan_bp,bermudan_se_bp,strip_error_bp,calibration_ms");
+    auto run = [&](double b) {
+        const auto t0 = std::chrono::steady_clock::now();
+        const pricers::CheyetteCalibration c = pricers::calibrateCheyette(kKappa, b, strip, cal);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        const std::vector<pricers::CheyettePrice> p = pricers::priceEuropeansCheyette(c.model, smileRights, fresh);
+        std::vector<double> v;
+        for (std::size_t i = 0; i < p.size(); ++i) {
+            v.push_back(models::impliedNormalVol(smileRights[i], p[i].value) * kBp);
+            std::fprintf(sm.f, "%.1f,%.0f,%.3f,%.3f\n", b, (smileRights[i].strike - fwd) * kBp, market[i].marketVol * kBp, v.back());
+        }
+        const pricers::CheyetteLsmcResult r = pricers::priceBermudanCheyette(c.model, rights, lsmc);
+        const double modelSkew = v.back() - v.front(), marketSkew = (market.back().marketVol - market.front().marketVol) * kBp;
+        std::fprintf(sc.f, "%.1f,%.3f,%.3f,%.3f,%.3f,%.1e,%.0f\n", b, modelSkew, marketSkew, r.lower * kBp, r.standardError * kBp, c.maxAbsErrorBp, ms);
+        return std::pair{modelSkew - marketSkew, r};
+    };
+    // Scan, then solve for the skew whose 5-year smile has the market's slope over ±100 bp.
+    std::vector<std::pair<double, double>> mismatch;
+    for (double b : {-10.0, 0.0, 10.0, 20.0, 30.0}) mismatch.push_back({b, run(b).first});
+    double fitted = mismatch.front().first;
+    for (std::size_t i = 1; i < mismatch.size(); ++i) {
+        const auto [b0, e0] = mismatch[i - 1];
+        const auto [b1, e1] = mismatch[i];
+        if ((e0 < 0.0) != (e1 < 0.0)) {
+            fitted = b0 - e0 * (b1 - b0) / (e1 - e0);
+            break;
+        }
+    }
+    run(fitted);
+    Csv f(out, "cheyette_fit.csv", "fitted_skew,lgm_trade_strike_bp,lgm_boundary_bp");
+    const CalibratedBermudan base = pricers::calibrateBermudan(m, trade, 1.0, 0, kKappa);
+    std::vector<double> boundary(rights.size(), 0.035);
+    CalibratedBermudan atBoundary = base;
+    for (int it = 0; it < 4; ++it) {
+        const std::vector<double> rate = pricers::priceBermudanPde(atBoundary.problem, pdeGrid(800)).boundaryRate;
+        for (std::size_t i = 0; i < rights.size(); ++i)
+            if (std::isfinite(rate[i])) boundary[i] = rate[i];
+        atBoundary = pricers::calibrateBermudanAtStrikes(m, trade, 1.0, 0, kKappa, [&](double k) { return swap(m, 10, k); }, boundary);
+    }
+    std::fprintf(f.f, "%.3f,%.3f,%.3f\n", fitted, pricers::priceBermudanPde(base.problem, pdeGrid(800)).value * kBp,
+                 pricers::priceBermudanPde(atBoundary.problem, pdeGrid(800)).value * kBp);
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Benchmark case for an independent library (tools/benchmark_quantlib.py)
 // ---------------------------------------------------------------------------------------------------
 
@@ -867,7 +931,7 @@ void xvaSection(const std::filesystem::path& out, const models::UsdMarket& m) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: rl_analysis <output-dir> [section...]\n  sections: curves swaprisk vol lgm bermudan exposure twofactor smile benchmark kappa xva (default: all)\n");
+        std::fprintf(stderr, "usage: rl_analysis <output-dir> [section...]\n  sections: curves swaprisk vol lgm bermudan exposure twofactor smile benchmark cheyette kappa xva (default: all)\n");
         return 2;
     }
     try {
@@ -889,6 +953,7 @@ int main(int argc, char** argv) {
         if (wanted("twofactor")) twoFactor(out, m);
         if (wanted("smile")) smileImpact(out, m);
         if (wanted("benchmark")) benchmark(out, m);
+        if (wanted("cheyette")) cheyette(out, m);
         if (wanted("kappa")) meanReversion(out, m);
         if (wanted("xva")) xvaSection(out, m);
         return 0;

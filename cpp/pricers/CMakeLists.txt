@@ -10,6 +10,7 @@ rl_add_module(
     src/bermudan_mc.cpp
     src/bermudan_g2pp.cpp
     src/cms_spread.cpp
+    src/cheyette_mc.cpp
     src/exposure.cpp
     src/risk.cpp
   TEST_SOURCES
@@ -17,6 +18,7 @@ rl_add_module(
     test/test_bermudan_mc.cpp
     test/test_bermudan_g2pp.cpp
     test/test_cms_spread.cpp
+    test/test_cheyette.cpp
     test/test_exposure.cpp
     test/test_risk.cpp
 )
